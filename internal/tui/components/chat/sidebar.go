@@ -1,0 +1,360 @@
+package chat
+
+import (
+	"context"
+	"fmt"
+	"sort"
+	"strings"
+
+	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
+	"github.com/charmbracelet/x/ansi"
+	"github.com/svpc-ai/svpc/internal/config"
+	"github.com/svpc-ai/svpc/internal/diff"
+	"github.com/svpc-ai/svpc/internal/history"
+	"github.com/svpc-ai/svpc/internal/pubsub"
+	"github.com/svpc-ai/svpc/internal/session"
+	"github.com/svpc-ai/svpc/internal/tui/styles"
+	"github.com/svpc-ai/svpc/internal/tui/theme"
+)
+
+type sidebarCmp struct {
+	width, height int
+	session       session.Session
+	history       history.Service
+	modFiles      map[string]struct {
+		additions int
+		removals  int
+	}
+}
+
+func (m *sidebarCmp) Init() tea.Cmd {
+	if m.history != nil {
+		ctx := context.Background()
+		// Subscribe to file events
+		filesCh := m.history.Subscribe(ctx)
+
+		// Initialize the modified files map
+		m.modFiles = make(map[string]struct {
+			additions int
+			removals  int
+		})
+
+		// Load initial files and calculate diffs
+		m.loadModifiedFiles(ctx)
+
+		// Return a command that will send file events to the Update method
+		return func() tea.Msg {
+			return <-filesCh
+		}
+	}
+	return nil
+}
+
+func (m *sidebarCmp) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	switch msg := msg.(type) {
+	case SessionSelectedMsg:
+		if msg.ID != m.session.ID {
+			m.session = msg
+			ctx := context.Background()
+			m.loadModifiedFiles(ctx)
+		}
+	case pubsub.Event[session.Session]:
+		if msg.Type == pubsub.UpdatedEvent {
+			if m.session.ID == msg.Payload.ID {
+				m.session = msg.Payload
+			}
+		}
+	case pubsub.Event[history.File]:
+		if msg.Payload.SessionID == m.session.ID {
+			// Process the individual file change instead of reloading all files
+			ctx := context.Background()
+			m.processFileChanges(ctx, msg.Payload)
+
+			// Return a command to continue receiving events
+			return m, func() tea.Msg {
+				ctx := context.Background()
+				filesCh := m.history.Subscribe(ctx)
+				return <-filesCh
+			}
+		}
+	}
+	return m, nil
+}
+
+func (m *sidebarCmp) View() string {
+	// The container owns the panel padding and the elevated glass surface, so
+	// the sidebar only lays content out against its full width and inherits
+	// the background from its parent.
+	return styles.Surface().
+		Width(m.width).
+		Height(m.height - 1).
+		Render(
+			lipgloss.JoinVertical(
+				lipgloss.Top,
+				header(m.width),
+				styles.Divider(m.width),
+				m.sessionSection(),
+				styles.Divider(m.width),
+				lspsConfigured(m.width),
+				styles.Divider(m.width),
+				m.modifiedFiles(),
+			),
+		)
+}
+
+func (m *sidebarCmp) sessionSection() string {
+	t := theme.CurrentTheme()
+	base := styles.Transparent()
+
+	title := m.session.Title
+	if title == "" {
+		title = "No active session"
+	}
+
+	value := base.
+		Foreground(t.Text()).
+		Width(m.width).
+		Render(ansi.Truncate(title, m.width, "…"))
+
+	return lipgloss.JoinVertical(
+		lipgloss.Left,
+		styles.SectionLabel("Session"),
+		value,
+	)
+}
+
+func (m *sidebarCmp) modifiedFile(filePath string, additions, removals int) string {
+	t := theme.CurrentTheme()
+	base := styles.Transparent()
+
+	// Diff badge, right aligned against the file name.
+	stats := ""
+	if additions > 0 && removals > 0 {
+		stats = " " +
+			base.Foreground(t.Success()).Bold(true).Render(fmt.Sprintf("+%d", additions)) +
+			" " +
+			base.Foreground(t.Error()).Bold(true).Render(fmt.Sprintf("-%d", removals))
+	} else if additions > 0 {
+		stats = " " + base.Foreground(t.Success()).Bold(true).Render(fmt.Sprintf("+%d", additions))
+	} else if removals > 0 {
+		stats = " " + base.Foreground(t.Error()).Bold(true).Render(fmt.Sprintf("-%d", removals))
+	}
+
+	// Long paths are truncated instead of wrapped so every row stays on a
+	// single line and the panel never grows past its allotted height. The
+	// name is padded so the diff badge always sits flush on the right edge.
+	pathWidth := m.width - lipgloss.Width(stats)
+	if pathWidth < 1 {
+		pathWidth = 1
+	}
+	filePathStr := base.
+		Foreground(t.Text()).
+		Width(pathWidth).
+		Render(ansi.Truncate(filePath, pathWidth, "…"))
+
+	return base.
+		Width(m.width).
+		Render(
+			lipgloss.JoinHorizontal(
+				lipgloss.Left,
+				filePathStr,
+				stats,
+			),
+		)
+}
+
+func (m *sidebarCmp) modifiedFiles() string {
+	t := theme.CurrentTheme()
+	base := styles.Transparent()
+
+	section := styles.SectionLabel("Modified files")
+
+	// If no modified files, show a placeholder message
+	if m.modFiles == nil || len(m.modFiles) == 0 {
+		return base.
+			Width(m.width).
+			Render(
+				lipgloss.JoinVertical(
+					lipgloss.Left,
+					section,
+					base.Foreground(t.TextMuted()).Render("No modified files"),
+				),
+			)
+	}
+
+	// Sort file paths alphabetically for consistent ordering
+	var paths []string
+	for path := range m.modFiles {
+		paths = append(paths, path)
+	}
+	sort.Strings(paths)
+
+	// Create views for each file in sorted order
+	var fileViews []string
+	for _, path := range paths {
+		stats := m.modFiles[path]
+		fileViews = append(fileViews, m.modifiedFile(path, stats.additions, stats.removals))
+	}
+
+	return base.
+		Width(m.width).
+		Render(
+			lipgloss.JoinVertical(
+				lipgloss.Left,
+				append([]string{section}, fileViews...)...,
+			),
+		)
+}
+
+func (m *sidebarCmp) SetSize(width, height int) tea.Cmd {
+	m.width = width
+	m.height = height
+	return nil
+}
+
+func (m *sidebarCmp) GetSize() (int, int) {
+	return m.width, m.height
+}
+
+func NewSidebarCmp(session session.Session, history history.Service) tea.Model {
+	return &sidebarCmp{
+		session: session,
+		history: history,
+	}
+}
+
+func (m *sidebarCmp) loadModifiedFiles(ctx context.Context) {
+	if m.history == nil || m.session.ID == "" {
+		return
+	}
+
+	// Get all latest files for this session
+	latestFiles, err := m.history.ListLatestSessionFiles(ctx, m.session.ID)
+	if err != nil {
+		return
+	}
+
+	// Get all files for this session (to find initial versions)
+	allFiles, err := m.history.ListBySession(ctx, m.session.ID)
+	if err != nil {
+		return
+	}
+
+	// Clear the existing map to rebuild it
+	m.modFiles = make(map[string]struct {
+		additions int
+		removals  int
+	})
+
+	// Process each latest file
+	for _, file := range latestFiles {
+		// Skip if this is the initial version (no changes to show)
+		if file.Version == history.InitialVersion {
+			continue
+		}
+
+		// Find the initial version for this specific file
+		var initialVersion history.File
+		for _, v := range allFiles {
+			if v.Path == file.Path && v.Version == history.InitialVersion {
+				initialVersion = v
+				break
+			}
+		}
+
+		// Skip if we can't find the initial version
+		if initialVersion.ID == "" {
+			continue
+		}
+		if initialVersion.Content == file.Content {
+			continue
+		}
+
+		// Calculate diff between initial and latest version
+		_, additions, removals := diff.GenerateDiff(initialVersion.Content, file.Content, file.Path)
+
+		// Only add to modified files if there are changes
+		if additions > 0 || removals > 0 {
+			// Remove working directory prefix from file path
+			displayPath := file.Path
+			workingDir := config.WorkingDirectory()
+			displayPath = strings.TrimPrefix(displayPath, workingDir)
+			displayPath = strings.TrimPrefix(displayPath, "/")
+
+			m.modFiles[displayPath] = struct {
+				additions int
+				removals  int
+			}{
+				additions: additions,
+				removals:  removals,
+			}
+		}
+	}
+}
+
+func (m *sidebarCmp) processFileChanges(ctx context.Context, file history.File) {
+	// Skip if this is the initial version (no changes to show)
+	if file.Version == history.InitialVersion {
+		return
+	}
+
+	// Find the initial version for this file
+	initialVersion, err := m.findInitialVersion(ctx, file.Path)
+	if err != nil || initialVersion.ID == "" {
+		return
+	}
+
+	// Skip if content hasn't changed
+	if initialVersion.Content == file.Content {
+		// If this file was previously modified but now matches the initial version,
+		// remove it from the modified files list
+		displayPath := getDisplayPath(file.Path)
+		delete(m.modFiles, displayPath)
+		return
+	}
+
+	// Calculate diff between initial and latest version
+	_, additions, removals := diff.GenerateDiff(initialVersion.Content, file.Content, file.Path)
+
+	// Only add to modified files if there are changes
+	if additions > 0 || removals > 0 {
+		displayPath := getDisplayPath(file.Path)
+		m.modFiles[displayPath] = struct {
+			additions int
+			removals  int
+		}{
+			additions: additions,
+			removals:  removals,
+		}
+	} else {
+		// If no changes, remove from modified files
+		displayPath := getDisplayPath(file.Path)
+		delete(m.modFiles, displayPath)
+	}
+}
+
+// Helper function to find the initial version of a file
+func (m *sidebarCmp) findInitialVersion(ctx context.Context, path string) (history.File, error) {
+	// Get all versions of this file for the session
+	fileVersions, err := m.history.ListBySession(ctx, m.session.ID)
+	if err != nil {
+		return history.File{}, err
+	}
+
+	// Find the initial version
+	for _, v := range fileVersions {
+		if v.Path == path && v.Version == history.InitialVersion {
+			return v, nil
+		}
+	}
+
+	return history.File{}, fmt.Errorf("initial version not found")
+}
+
+// Helper function to get the display path for a file
+func getDisplayPath(path string) string {
+	workingDir := config.WorkingDirectory()
+	displayPath := strings.TrimPrefix(path, workingDir)
+	return strings.TrimPrefix(displayPath, "/")
+}
