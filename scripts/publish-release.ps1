@@ -123,7 +123,7 @@ if ($existing) {
     body        = $notes
     draft       = $false
     prerelease  = $false
-    target_commitish = 'master'
+    target_commitish = 'main'
   }
 }
 
