@@ -14,7 +14,6 @@ import (
 	"github.com/svpc-ai/svpc/internal/config"
 	"github.com/svpc-ai/svpc/internal/db"
 	"github.com/svpc-ai/svpc/internal/format"
-	"github.com/svpc-ai/svpc/internal/gui"
 	"github.com/svpc-ai/svpc/internal/llm/agent"
 	"github.com/svpc-ai/svpc/internal/logging"
 	"github.com/svpc-ai/svpc/internal/pubsub"
@@ -68,6 +67,9 @@ to assist developers in writing, debugging, and understanding code directly from
 		outputFormat, _ := cmd.Flags().GetString("output-format")
 		quiet, _ := cmd.Flags().GetBool("quiet")
 		wantGUI, _ := cmd.Flags().GetBool("gui")
+		wantServe, _ := cmd.Flags().GetString("serve")
+		servePort, _ := cmd.Flags().GetInt("serve-port")
+		serveToken, _ := cmd.Flags().GetString("serve-token")
 
 		// Validate format option
 		if !format.IsValid(outputFormat) {
@@ -88,10 +90,15 @@ to assist developers in writing, debugging, and understanding code directly from
 			cwd = c
 		}
 
-		// The desktop client boots the same application core itself, so it owns
-		// the window and the loopback bridge from that point on.
-		if wantGUI {
-			return gui.Run(cwd, debug)
+		// The window and the network client boot the core the same way, so both
+		// get every tool and the same session store.
+		if wantGUI || wantServe != "" {
+			return runClient(cwd, debug, clientOptions{
+				window:     wantGUI,
+				serveAddr:  wantServe,
+				servePort:  servePort,
+				serveToken: serveToken,
+			})
 		}
 
 		_, err := config.Load(cwd, debug)
@@ -309,6 +316,15 @@ func init() {
 
 	// Launch the native desktop window instead of the terminal UI.
 	rootCmd.Flags().Bool("gui", false, "Open the desktop window (Windows only)")
+
+	// Expose the bridge to another device, behind a token. The Android client
+	// and a phone browser both use this.
+	rootCmd.Flags().String("serve", "",
+		"Serve the interface on this address so a phone can reach it, e.g. 0.0.0.0")
+	rootCmd.Flags().Int("serve-port", 0,
+		"Port for --serve (0 picks a free one; 8080 is a sensible fixed choice)")
+	rootCmd.Flags().String("serve-token", "",
+		"Shared secret for --serve (generated and saved if omitted)")
 
 	// Add format flag with validation logic
 	rootCmd.Flags().StringP("output-format", "f", format.Text.String(),

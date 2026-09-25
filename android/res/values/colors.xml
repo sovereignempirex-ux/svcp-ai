@@ -1,0 +1,7 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- The same canvas the desktop window uses, so the app does not flash
+         white before the WebView paints. -->
+    <color name="canvas">#0A0C11</color>
+    <color name="accent">#4CC2FF</color>
+</resources>

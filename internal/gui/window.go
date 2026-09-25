@@ -3,7 +3,6 @@
 package gui
 
 import (
-	"context"
 	"errors"
 	"os"
 	"syscall"
@@ -15,6 +14,11 @@ import (
 // errWebView2Missing is returned when the runtime cannot create a window.
 var errWebView2Missing = errors.New("SVPC AI: the Microsoft Edge WebView2 runtime is required. " +
 	"Install it from https://developer.microsoft.com/microsoft-edge/webview2/ and try again")
+
+// errNoBridge is returned when a window is asked to open before the bridge has
+// been started, which would leave a blank frame with no way to diagnose it.
+var errNoBridge = errors.New("SVPC AI: the desktop window has nothing to show; " +
+	"start it with --gui or --serve so the bridge is running")
 
 // enableDPIAwareness makes the process per-monitor DPI aware so the WebView2
 // content and the native chrome share one coordinate space. Without it Windows
@@ -107,29 +111,20 @@ func applyWindowIcon(hwnd uintptr) {
 	notifyIconChange.Call(shcneAssocChanged, shcnfFlush, 0, 0)
 }
 
-// Run opens the SVPC AI desktop window and blocks until the user closes it.
+// RunWindow opens the SVPC AI desktop window and blocks until the user closes
+// it.
 //
-// It boots the same application core the terminal UI uses, so every tool, the
-// language servers and the session store are available in the window too. A
-// missing provider is not fatal: the window still opens and the user can
-// configure one from its own settings panel.
-func Run(workingDir string, debug bool) error {
+// url is the bridge to render. The caller has already started it, so the window
+// is only a view: starting a second bridge here would mean two of them.
+//
+// workingDir and debug are accepted so the signature does not change with the
+// transport; the configuration is loaded by the caller, before the bridge.
+func RunWindow(workingDir string, debug bool, url string) error {
 	enableDPIAwareness()
 
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
-	sess, err := bootstrap(ctx, workingDir, debug)
-	if err != nil {
-		return err
+	if url == "" {
+		return errNoBridge
 	}
-	defer sess.Close()
-
-	url, shutdown, err := serve(ctx, sess.Conn, sess.Core, sess.SetupErr)
-	if err != nil {
-		return err
-	}
-	defer shutdown()
 
 	profile := tempProfileDir()
 	defer os.RemoveAll(profile)

@@ -65,3 +65,10 @@ opencode.md
 # A pristine copy of the upstream project, kept alongside for reference.
 /opencode-main/
 /opencode-main.zip
+
+# Android build output: the intermediate tree and the signing key never belong
+# in the repository, and the key especially should not.
+/android/build/
+/android/dist/
+*.keystore
+*.jks

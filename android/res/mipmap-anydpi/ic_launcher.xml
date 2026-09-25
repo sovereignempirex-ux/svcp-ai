@@ -1,0 +1,7 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<!-- Fallback for API 24-25, which predate adaptive icons. The same vector is
+     used, so there is one definition of the mark rather than two. -->
+<layer-list xmlns:android="http://schemas.android.com/apk/res/android">
+    <item android:drawable="@color/canvas" />
+    <item android:drawable="@drawable/ic_launcher_foreground" />
+</layer-list>

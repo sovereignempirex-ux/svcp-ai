@@ -741,11 +741,29 @@ func flush(w http.ResponseWriter, f http.Flusher) {
 	}
 }
 
-// serve starts the loopback bridge and returns the base URL plus a shutdown func.
+// serve starts the bridge on loopback and returns the base URL plus a shutdown
+// func.
 //
 // a may be nil when the agent core could not start; the bridge then serves a
 // setup-only UI so the user can configure a provider from the window.
 func serve(ctx context.Context, conn *sql.DB, a *app.App, setupErr error) (string, func(), error) {
+	return serveWith(ctx, conn, a, setupErr, loopbackListener, nil)
+}
+
+// loopbackListener is the default: this machine only, no credential, because
+// nothing else can reach it.
+func loopbackListener() (net.Listener, error) {
+	return net.Listen("tcp", "127.0.0.1:0")
+}
+
+// serveWith builds the handler and starts listening through the given function.
+//
+// The listener and the authenticator are parameters so the loopback default and
+// the network-exposed case share one body, and so a test can bind an ephemeral
+// port without racing for one.
+func serveWith(ctx context.Context, conn *sql.DB, a *app.App, setupErr error,
+	listen func() (net.Listener, error), middleware *auth) (string, func(), error) {
+
 	b := newBridge(ctx, conn, a, setupErr)
 
 	mux := http.NewServeMux()
@@ -760,19 +778,57 @@ func serve(ctx context.Context, conn *sql.DB, a *app.App, setupErr error) (strin
 	}
 	mux.Handle("/", http.FileServer(http.FS(sub)))
 
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	var handler http.Handler = mux
+	if middleware != nil {
+		middleware.next = mux
+		handler = middleware
+	}
+
+	ln, err := listen()
 	if err != nil {
 		return "", nil, err
 	}
 
-	srv := &http.Server{Handler: mux, ReadHeaderTimeout: 10 * time.Second}
+	srv := &http.Server{Handler: handler, ReadHeaderTimeout: 10 * time.Second}
 	go srv.Serve(ln)
 
 	url := "http://" + ln.Addr().String() + "/"
 	shutdown := func() {
+		// A streaming chat can outlive the grace period, so the call is bounded
+		// rather than allowed to block process exit.
 		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 		defer cancel()
 		srv.Shutdown(ctx)
 	}
 	return url, shutdown, nil
+}
+
+// ServeLocal starts the bridge on loopback with no credential, which is the
+// default for a window on the same machine.
+func ServeLocal(ctx context.Context, conn *sql.DB, a *app.App, setupErr error) (string, func(), error) {
+	return serve(ctx, conn, a, setupErr)
+}
+
+// ServeRemote starts the bridge on a network address, behind a shared token.
+//
+// This is what the Android client and a phone browser connect to. It refuses to
+// start without a token: the bridge can run commands, write files and deploy,
+// so an open port is not a small thing.
+func ServeRemote(ctx context.Context, conn *sql.DB, a *app.App, setupErr error, cfg ServeConfig) (string, func(), error) {
+	if cfg.Addr == "" {
+		cfg.Addr = "0.0.0.0"
+	}
+	if cfg.Token == "" {
+		// Reuse the saved token so a device does not need configuring twice.
+		token, err := loadOrCreateToken(cfg.Addr)
+		if err != nil {
+			return "", nil, fmt.Errorf("preparing a token: %w", err)
+		}
+		cfg.Token = token
+	}
+
+	return serveWith(ctx, conn, a, setupErr,
+		func() (net.Listener, error) { return listen(cfg) },
+		&auth{token: cfg.Token},
+	)
 }
