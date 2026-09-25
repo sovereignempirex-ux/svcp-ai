@@ -128,11 +128,39 @@ if ($existing) {
 }
 
 Step "Uploading $($assets.Count) asset(s)..."
-foreach ($path in $assets) {
-  $name = Split-Path $path -Leaf
-  $url = "https://uploads.github.com/repos/$Repo/releases/$($release.id)/assets?name=$([uri]::EscapeDataString($name))"
 
-  Step "  $name"
+# GitHub rewrites characters it considers unsafe in an asset name — a space
+# becomes a dot, so "SVPC AI.exe" is stored and downloaded as "SVPC.AI.exe".
+# Comparing against the local name would therefore never match, and a re-run
+# would push the whole file again for no reason. Everything below uses the name
+# GitHub will actually hold.
+function Get-UploadName([string]$name) { return ($name -replace '[^A-Za-z0-9._-]', '.') }
+
+foreach ($path in $assets) {
+  $name = Get-UploadName (Split-Path $path -Leaf)
+  $localSize = (Get-Item $path).Length
+
+  # A re-run should not push 61 MB again. The release's own record is
+  # authoritative; the download URL may still be serving a cached copy.
+  $existing = (Invoke-RestMethod "https://api.github.com/repos/$Repo/releases/tags/$Tag" -Headers $headers).assets |
+    Where-Object { $_.name -eq $name }
+
+  if ($existing -and $existing.size -eq $localSize) {
+    Step "  skip  $name  already published, $localSize bytes"
+    continue
+  }
+
+  if ($existing) {
+    # A different size means it was rebuilt, so the old one has to go first:
+    # GitHub will not overwrite an asset in place.
+    Step "  replace $name  ($($existing.size) -> $localSize bytes)"
+    Invoke-RestMethod -Method Delete -Uri "https://api.github.com/repos/$Repo/releases/assets/$($existing.id)" -Headers $headers | Out-Null
+    Start-Sleep -Seconds 2
+  }
+
+  $url = "https://uploads.github.com/repos/$Repo/releases/$($release.id)/assets?name=$([uri]::EscapeDataString($name))"
+  Step "  upload $name"
+
   $previous = $ErrorActionPreference
   $ErrorActionPreference = 'Continue'
   try {
@@ -144,6 +172,42 @@ foreach ($path in $assets) {
   } finally {
     $ErrorActionPreference = $previous
   }
+}
+
+Step "Verifying what was published..."
+# A download URL is served from a CDN that can still be holding the previous
+# asset, so the check reads the release's own record rather than the bytes the
+# CDN hands back. A size that disagrees means the upload has not landed yet.
+$problems = @()
+foreach ($path in $assets) {
+  $name = Get-UploadName (Split-Path $path -Leaf)
+  $localSize = (Get-Item $path).Length
+
+  $published = $null
+  for ($attempt = 1; $attempt -le 5; $attempt++) {
+    $current = Invoke-RestMethod "https://api.github.com/repos/$Repo/releases/tags/$Tag" -Headers $headers
+    $published = $current.assets | Where-Object { $_.name -eq $name }
+    if ($published) { break }
+    Start-Sleep -Seconds 2
+  }
+
+  if (-not $published) {
+    $problems += "$name is not attached to the release"
+  } elseif ($published.size -ne $localSize) {
+    $problems += "$name is $localSize bytes locally but $($published.size) on the release"
+  } else {
+    Step "  ok  $name  $localSize bytes"
+  }
+}
+
+if ($problems) {
+  Write-Warning @"
+A published asset does not match the local file:
+  $($problems -join "`n  ")
+
+If a file was replaced, give it a moment and re-run. The bytes on GitHub can be
+correct while a cached download URL still serves the previous one.
+"@
 }
 
 Step "Done: https://github.com/$Repo/releases/tag/$Tag"

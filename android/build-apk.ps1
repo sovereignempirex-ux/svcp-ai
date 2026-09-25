@@ -136,13 +136,20 @@ try {
 } finally { Pop-Location }
 
 # ── 5. Sign ─────────────────────────────────────────────────────
-$keystore = Join-Path $out 'svpc.keystore'
+# The key lives outside build/ on purpose. Android refuses to update an
+# installed app signed with a different key, so wiping the build directory must
+# not silently mint a new identity: that would strand every user on the very
+# first release. Back this file up somewhere safe.
+$keystoreDir = Join-Path $here 'keystore'
+New-Item -ItemType Directory -Force -Path $keystoreDir | Out-Null
+$keystore = Join-Path $keystoreDir 'svpc.keystore'
 $alias = 'svpc'
 $storePass = 'svpc-android'
 $keyPass = 'svpc-android'
 
 if (-not (Test-Path $keystore)) {
-  Step 'Creating a signing key...'
+  Step 'No signing key found; generating one.'
+  Step "IMPORTANT: back this up now -> $keystore"
   Run-Native (Join-Path $javaHome 'bin\keytool.exe') @(
     '-genkeypair',
     '-keystore', $keystore,
@@ -155,6 +162,8 @@ if (-not (Test-Path $keystore)) {
     '-dname', 'CN=SVPC AI, OU=SVPC AI, O=SVPC AI, L=, ST=, C=',
     '-storetype', 'PKCS12'
   ) | Out-Null
+} else {
+  Step 'Reusing the existing signing key (android/keystore).'
 }
 
 Step 'Aligning...'

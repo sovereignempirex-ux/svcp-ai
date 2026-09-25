@@ -70,5 +70,8 @@ opencode.md
 # in the repository, and the key especially should not.
 /android/build/
 /android/dist/
+# The signing key is deliberately outside build/ so a clean does not replace it.
+# It is still never committed: back it up out of the repository.
+/android/keystore/
 *.keystore
 *.jks
