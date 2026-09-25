@@ -1,0 +1,141 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>SVPC AI</title>
+<link rel="icon" href="svpc.ico" sizes="any">
+<link rel="stylesheet" href="app.css">
+</head>
+<body>
+
+<div class="app">
+
+  <!-- ── Sidebar ─────────────────────────────────────────── -->
+  <aside class="sidebar">
+    <header class="brand">
+      <div class="brand-mark" aria-hidden="true">
+        <svg viewBox="0 0 40 40" fill="none">
+          <circle cx="20" cy="20" r="18" stroke="currentColor" stroke-opacity=".28"/>
+          <circle cx="20" cy="20" r="14.5" stroke="currentColor" stroke-width="1.5"/>
+          <path d="M14 14h12M14 20h12M14 26h12" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"/>
+          <circle cx="20" cy="20" r="2.4" fill="var(--accent)"/>
+        </svg>
+      </div>
+      <div class="brand-text">
+        <strong>SVPC AI</strong>
+        <span id="modelLabel">not configured</span>
+      </div>
+    </header>
+
+    <div class="sidebar-scroll">
+      <section class="panel">
+        <h2 class="panel-title">
+          <span class="tick"></span>Provider
+        </h2>
+        <label class="field">
+          <span>Service</span>
+          <select id="provider">
+            <option value="groq">Groq</option>
+            <option value="openai">OpenAI</option>
+            <option value="anthropic">Anthropic</option>
+            <option value="gemini">Google Gemini</option>
+            <option value="ollama">Ollama (local)</option>
+            <option value="custom">Custom endpoint</option>
+          </select>
+        </label>
+
+        <label class="field" id="keyField">
+          <span>API key</span>
+          <input id="apiKey" type="password" placeholder="sk-…" autocomplete="off" spellcheck="false">
+        </label>
+
+        <label class="field">
+          <span>Model</span>
+          <input id="model" type="text" placeholder="llama-3.3-70b-versatile" spellcheck="false">
+        </label>
+
+        <label class="field hidden" id="urlField">
+          <span>Endpoint</span>
+          <input id="baseUrl" type="text" placeholder="http://localhost:11434/v1" spellcheck="false">
+        </label>
+
+        <button id="saveCfg" class="btn btn-ghost btn-block">Save settings</button>
+      </section>
+
+      <section class="panel">
+        <h2 class="panel-title">
+          <span class="tick"></span>Session
+        </h2>
+        <div class="stat-row">
+          <span>Messages</span><b id="statCount">0</b>
+        </div>
+        <div class="stat-row">
+          <span>Characters</span><b id="statChars">0</b>
+        </div>
+        <button id="clearChat" class="btn btn-ghost btn-block">Clear conversation</button>
+      </section>
+
+      <p class="hint">Keys stay on this machine. Nothing is uploaded but the prompt you send.</p>
+    </div>
+
+    <footer class="sidebar-foot">
+      <span><kbd>Ctrl</kbd><kbd>K</kbd> clear</span>
+      <span><kbd>Enter</kbd> send</span>
+      <span><kbd>Shift</kbd><kbd>Enter</kbd> newline</span>
+    </footer>
+  </aside>
+
+  <!-- ── Main ────────────────────────────────────────────── -->
+  <main class="main">
+    <header class="topbar">
+      <div class="crumb">
+        <span class="dot" id="statusDot"></span>
+        <span id="statusText">Ready</span>
+      </div>
+      <div class="topbar-actions">
+        <button class="icon-btn" id="themeToggle" title="Toggle contrast">◐</button>
+      </div>
+    </header>
+
+    <div class="stream" id="stream">
+      <div class="setup hidden" id="setupBanner">
+        <span class="setup-mark">◇</span>
+        <div>
+          <strong>Setup needed</strong>
+          <p id="setupReason"></p>
+        </div>
+      </div>
+
+      <div class="hero" id="hero">
+        <div class="hero-mark">✦</div>
+        <h1>Ready when you are.</h1>
+        <p>Ask about a file, refactor a function, review a diff — or paste an error and let the model dig in.</p>
+        <div class="hero-chips">
+          <button class="chip" data-prompt="Explain what this project does and how to run it.">Explain this project</button>
+          <button class="chip" data-prompt="Find the most complex function in this repository and explain it.">Find the tricky code</button>
+          <button class="chip" data-prompt="Write a Go unit test for the function in the file I have open.">Write a test</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="composer">
+      <div class="composer-box">
+        <div class="prompt-mark">❯</div>
+        <textarea id="input" rows="1" placeholder="Ask anything…  Enter to send · Shift+Enter for a new line"></textarea>
+      </div>
+      <button id="send" class="btn btn-primary">
+        <span>Send</span>
+        <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true">
+          <path d="M2 8h11M9 4l4 4-4 4" stroke="currentColor" stroke-width="1.8" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
+        </svg>
+      </button>
+      <button id="stop" class="btn btn-ghost hidden" title="Cancel generation">Stop</button>
+    </div>
+  </main>
+
+</div>
+
+<script src="app.js"></script>
+</body>
+</html>

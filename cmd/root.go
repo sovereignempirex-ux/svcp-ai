@@ -9,16 +9,17 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	zone "github.com/lrstanley/bubblezone"
+	"github.com/spf13/cobra"
 	"github.com/svpc-ai/svpc/internal/app"
 	"github.com/svpc-ai/svpc/internal/config"
 	"github.com/svpc-ai/svpc/internal/db"
 	"github.com/svpc-ai/svpc/internal/format"
+	"github.com/svpc-ai/svpc/internal/gui"
 	"github.com/svpc-ai/svpc/internal/llm/agent"
 	"github.com/svpc-ai/svpc/internal/logging"
 	"github.com/svpc-ai/svpc/internal/pubsub"
 	"github.com/svpc-ai/svpc/internal/tui"
 	"github.com/svpc-ai/svpc/internal/version"
-	"github.com/spf13/cobra"
 )
 
 var rootCmd = &cobra.Command{
@@ -28,8 +29,11 @@ var rootCmd = &cobra.Command{
 It provides an interactive chat interface with AI capabilities, code analysis, and LSP integration
 to assist developers in writing, debugging, and understanding code directly from the terminal.`,
 	Example: `
-  # Run in interactive mode
+  # Run the terminal UI
   svpc
+
+  # Run the desktop window instead
+  svpc --gui
 
   # Run with debug logging
   svpc -d
@@ -63,6 +67,7 @@ to assist developers in writing, debugging, and understanding code directly from
 		prompt, _ := cmd.Flags().GetString("prompt")
 		outputFormat, _ := cmd.Flags().GetString("output-format")
 		quiet, _ := cmd.Flags().GetBool("quiet")
+		wantGUI, _ := cmd.Flags().GetBool("gui")
 
 		// Validate format option
 		if !format.IsValid(outputFormat) {
@@ -82,6 +87,13 @@ to assist developers in writing, debugging, and understanding code directly from
 			}
 			cwd = c
 		}
+
+		// The desktop client boots the same application core itself, so it owns
+		// the window and the loopback bridge from that point on.
+		if wantGUI {
+			return gui.Run(cwd, debug)
+		}
+
 		_, err := config.Load(cwd, debug)
 		if err != nil {
 			return err
@@ -294,6 +306,9 @@ func init() {
 	rootCmd.Flags().BoolP("debug", "d", false, "Debug")
 	rootCmd.Flags().StringP("cwd", "c", "", "Current working directory")
 	rootCmd.Flags().StringP("prompt", "p", "", "Prompt to run in non-interactive mode")
+
+	// Launch the native desktop window instead of the terminal UI.
+	rootCmd.Flags().Bool("gui", false, "Open the desktop window (Windows only)")
 
 	// Add format flag with validation logic
 	rootCmd.Flags().StringP("output-format", "f", format.Text.String(),

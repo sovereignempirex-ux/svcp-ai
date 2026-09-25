@@ -10,9 +10,9 @@ import (
 	"runtime"
 	"strings"
 
+	"github.com/spf13/viper"
 	"github.com/svpc-ai/svpc/internal/llm/models"
 	"github.com/svpc-ai/svpc/internal/logging"
-	"github.com/spf13/viper"
 )
 
 // MCPType defines the type of MCP (Model Control Protocol) server.
@@ -911,6 +911,34 @@ func UpdateAgentModel(agentName AgentName, modelID models.ModelID) error {
 			config.Agents = make(map[AgentName]Agent)
 		}
 		config.Agents[agentName] = newAgentCfg
+	})
+}
+
+// UpdateProviderAPIKey sets the API key for a provider in the configuration and
+// persists it. It is used by the desktop client, which collects credentials in
+// the UI instead of the environment.
+func UpdateProviderAPIKey(providerName string, apiKey string) error {
+	if cfg == nil {
+		panic("config not loaded")
+	}
+
+	name := models.ModelProvider(strings.ToLower(providerName))
+	provider, ok := cfg.Providers[name]
+	if !ok {
+		return fmt.Errorf("provider %s is not configured", providerName)
+	}
+	provider.APIKey = apiKey
+	provider.Disabled = false
+	cfg.Providers[name] = provider
+
+	return updateCfgFile(func(config *Config) {
+		if config.Providers == nil {
+			config.Providers = make(map[models.ModelProvider]Provider)
+		}
+		existing := config.Providers[name]
+		existing.APIKey = apiKey
+		existing.Disabled = false
+		config.Providers[name] = existing
 	})
 }
 

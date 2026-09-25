@@ -10,8 +10,8 @@ import (
 	"strings"
 	"unicode"
 
-	"github.com/svpc-ai/svpc/internal/logging"
 	"github.com/spf13/viper"
+	"github.com/svpc-ai/svpc/internal/logging"
 )
 
 const (

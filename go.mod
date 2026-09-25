@@ -33,7 +33,11 @@ require (
 	github.com/stretchr/testify v1.10.0
 )
 
-require github.com/skratchdot/open-golang v0.0.0-20200116055534-eef842397966 // indirect
+require (
+	github.com/jchv/go-webview2 v0.0.0-20260205173254-56598839c808 // indirect
+	github.com/jchv/go-winloader v0.0.0-20250406163304-c1995be93bd1 // indirect
+	github.com/skratchdot/open-golang v0.0.0-20200116055534-eef842397966 // indirect
+)
 
 require (
 	cloud.google.com/go v0.116.0 // indirect

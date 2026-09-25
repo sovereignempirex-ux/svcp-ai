@@ -45,3 +45,23 @@ Thumbs.db
 
 opencode
 opencode.md
+
+# SVPC AI build and packaging artifacts
+# resource.syso is generated from the icon and versioninfo.json by goversioninfo
+# at build time; it must not be committed because it differs per build host.
+/resource.syso
+*.syso
+
+# Signing material must never reach the repository.
+/*.cer
+/*.pfx
+/*.p12
+/*.pem
+
+# Local application data: sessions, logs and generated images.
+/.svpc/
+/dist/
+
+# A pristine copy of the upstream project, kept alongside for reference.
+/opencode-main/
+/opencode-main.zip

@@ -9,34 +9,38 @@ import (
 )
 
 const (
-	GitHubToolName   = "github"
-	GitLabToolName   = "gitlab"
+	GitHubToolName    = "github"
+	GitLabToolName    = "gitlab"
 	BitbucketToolName = "bitbucket"
+
+	// HostingToolName is the unified provider-agnostic tool that fronts the
+	// three platforms above.
+	HostingToolName = "hosting"
 )
 
 type HostingProvider string
 
 const (
-	ProviderGitHub   HostingProvider = "github"
-	ProviderGitLab   HostingProvider = "gitlab"
+	ProviderGitHub    HostingProvider = "github"
+	ProviderGitLab    HostingProvider = "gitlab"
 	ProviderBitbucket HostingProvider = "bitbucket"
 )
 
 type HostingParams struct {
-	Provider    string `json:"provider"`
-	Action      string `json:"action"`
-	Owner       string `json:"owner,omitempty"`
-	Repo        string `json:"repo,omitempty"`
-	Title       string `json:"title,omitempty"`
-	Body        string `json:"body,omitempty"`
-	Head        string `json:"head,omitempty"`
-	Base        string `json:"base,omitempty"`
-	Number      int    `json:"number,omitempty"`
-	State       string `json:"state,omitempty"`
-	Labels      []string `json:"labels,omitempty"`
-	Assignees   []string `json:"assignees,omitempty"`
-	Token       string `json:"token,omitempty"`
-	APIURL      string `json:"api_url,omitempty"`
+	Provider  string   `json:"provider"`
+	Action    string   `json:"action"`
+	Owner     string   `json:"owner,omitempty"`
+	Repo      string   `json:"repo,omitempty"`
+	Title     string   `json:"title,omitempty"`
+	Body      string   `json:"body,omitempty"`
+	Head      string   `json:"head,omitempty"`
+	Base      string   `json:"base,omitempty"`
+	Number    int      `json:"number,omitempty"`
+	State     string   `json:"state,omitempty"`
+	Labels    []string `json:"labels,omitempty"`
+	Assignees []string `json:"assignees,omitempty"`
+	Token     string   `json:"token,omitempty"`
+	APIURL    string   `json:"api_url,omitempty"`
 }
 
 type HostingTool struct {
@@ -271,8 +275,8 @@ func (c *hostingClient) createPR(ctx context.Context, params HostingParams) (str
 		return string(data), err
 	case ProviderGitLab:
 		payload = map[string]any{
-			"title":        params.Title,
-			"description":  params.Body,
+			"title":         params.Title,
+			"description":   params.Body,
 			"source_branch": params.Head,
 			"target_branch": base,
 		}
@@ -280,9 +284,9 @@ func (c *hostingClient) createPR(ctx context.Context, params HostingParams) (str
 		return string(data), err
 	case ProviderBitbucket:
 		payload = map[string]any{
-			"title": params.Title,
+			"title":       params.Title,
 			"description": params.Body,
-			"source": map[string]any{"branch": map[string]any{"name": params.Head}},
+			"source":      map[string]any{"branch": map[string]any{"name": params.Head}},
 			"destination": map[string]any{"branch": map[string]any{"name": base}},
 		}
 		data, err := c.doRequest(ctx, "POST", fmt.Sprintf("/repositories/%s/%s/pullrequests", params.Owner, params.Repo), payload)
@@ -317,7 +321,7 @@ func (c *hostingClient) createIssue(ctx context.Context, params HostingParams) (
 		return string(data), err
 	case ProviderBitbucket:
 		payload = map[string]any{
-			"title": params.Title,
+			"title":   params.Title,
 			"content": map[string]any{"raw": params.Body},
 		}
 		data, err := c.doRequest(ctx, "POST", fmt.Sprintf("/repositories/%s/%s/issues", params.Owner, params.Repo), payload)

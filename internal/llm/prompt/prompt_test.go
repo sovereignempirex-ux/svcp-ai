@@ -1,14 +1,14 @@
 package prompt
 
 import (
-	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
-	"github.com/svpc-ai/svpc/internal/config"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"github.com/svpc-ai/svpc/internal/config"
 )
 
 func TestGetContextFromPaths(t *testing.T) {
@@ -35,7 +35,19 @@ func TestGetContextFromPaths(t *testing.T) {
 	createTestFiles(t, tmpDir, testFiles)
 
 	context := getContextFromPaths()
-	expectedContext := fmt.Sprintf("# From:%s/file.txt\nfile.txt: test content\n# From:%s/directory/file_a.txt\ndirectory/file_a.txt: test content\n# From:%s/directory/file_b.txt\ndirectory/file_b.txt: test content\n# From:%s/directory/file_c.txt\ndirectory/file_c.txt: test content", tmpDir, tmpDir, tmpDir, tmpDir)
+
+	// The context is built with filepath.Join, so the expected paths have to use
+	// the platform separator too — hardcoding "/" only works on Unix.
+	from := func(rel string) string {
+		return "# From:" + filepath.Join(tmpDir, filepath.FromSlash(rel))
+	}
+	expectedContext := strings.Join([]string{
+		from("file.txt"), "file.txt: test content",
+		from("directory/file_a.txt"), "directory/file_a.txt: test content",
+		from("directory/file_b.txt"), "directory/file_b.txt: test content",
+		from("directory/file_c.txt"), "directory/file_c.txt: test content",
+	}, "\n")
+
 	assert.Equal(t, expectedContext, context)
 }
 

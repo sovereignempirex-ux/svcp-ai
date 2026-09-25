@@ -15,9 +15,9 @@ import (
 	"github.com/aymanbagabas/go-udiff"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
+	"github.com/sergi/go-diff/diffmatchpatch"
 	"github.com/svpc-ai/svpc/internal/config"
 	"github.com/svpc-ai/svpc/internal/tui/theme"
-	"github.com/sergi/go-diff/diffmatchpatch"
 )
 
 // -------------------------------------------------------------------------

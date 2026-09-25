@@ -1,8 +1,0 @@
-{
-  "$schema": "./svpc-schema.json",
-  "lsp": {
-    "gopls": {
-      "command": "gopls"
-    }
-  }
-}

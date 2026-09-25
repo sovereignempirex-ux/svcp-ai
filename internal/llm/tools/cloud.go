@@ -4,373 +4,62 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"net/http"
 	"strings"
+
+	"github.com/svpc-ai/svpc/internal/permission"
 )
 
 const (
-	AWSToolName       = "aws"
-	GCPToolName       = "gcp"
-	AzureToolName     = "azure"
+	AWSToolName        = "aws"
+	GCPToolName        = "gcp"
+	AzureToolName      = "azure"
 	CloudflareToolName = "cloudflare"
-	VercelToolName    = "vercel"
-	NetlifyToolName   = "netlify"
-	HerokuToolName    = "heroku"
-	DockerToolName    = "docker"
+	VercelToolName     = "vercel"
+	NetlifyToolName    = "netlify"
+	HerokuToolName     = "heroku"
 	KubernetesToolName = "k8s"
+	DockerToolName     = "docker"
+
+	// CloudToolName is the unified tool that fronts every cloud provider.
+	CloudToolName = "cloud"
 )
 
-type CloudParams struct {
-	Provider string         `json:"provider"`
-	Action   string         `json:"action"`
-	Region   string         `json:"region,omitempty"`
-	Params   map[string]any `json:"params,omitempty"`
-	Token    string         `json:"token,omitempty"`
-	APIURL   string         `json:"api_url,omitempty"`
-}
-
+// CloudTool drives the provider CLIs (aws, gcloud, az, wrangler, vercel,
+// netlify, heroku) through a single action surface, so the model does not have
+// to remember seven different schemas.
 type CloudTool struct {
-	httpClient *http.Client
+	runner *runner
 }
 
-func NewCloudTool() BaseTool {
-	return &CloudTool{
-		httpClient: &http.Client{},
-	}
+func NewCloudTool(permissions permission.Service) BaseTool {
+	return &CloudTool{runner: newRunner(permissions)}
 }
 
 func (t *CloudTool) Info() ToolInfo {
 	return ToolInfo{
-		Name:        "cloud",
-		Description: "Interact with cloud providers (AWS, GCP, Azure, Cloudflare, Vercel, Netlify, Heroku). Actions vary by provider.",
+		Name: CloudToolName,
+		Description: "Interact with cloud providers through their official CLIs. " +
+			"Providers: aws, gcp, azure, cloudflare, vercel, netlify, heroku. " +
+			"The action is passed to the provider CLI, so anything that CLI accepts works.",
 		Parameters: map[string]any{
 			"type": "object",
 			"properties": map[string]any{
 				"provider": map[string]any{
-					"type":        "string",
-					"description": "Cloud provider",
-					"enum":        []string{"aws", "gcp", "azure", "cloudflare", "vercel", "netlify", "heroku"},
+					"type": "string",
+					"enum": []string{"aws", "gcp", "azure", "cloudflare", "vercel", "netlify", "heroku"},
 				},
 				"action": map[string]any{
 					"type":        "string",
-					"description": "Action to perform (provider-specific)",
-				},
-				"region": map[string]any{
-					"type":        "string",
-					"description": "Region (for AWS, GCP, Azure)",
-				},
-				"params": map[string]any{
-					"type":        "object",
-					"description": "Action-specific parameters",
-				},
-				"token": map[string]any{
-					"type":        "string",
-					"description": "API token/credentials",
-				},
-				"api_url": map[string]any{
-					"type":        "string",
-					"description": "Custom API endpoint",
-				},
-			},
-			"required": []string{"provider", "action"},
-		},
-	}
-}
-
-func (t *CloudTool) Run(ctx context.Context, call ToolCall) (ToolResponse, error) {
-	var params CloudParams
-	if err := json.Unmarshal([]byte(call.Input), &params); err != nil {
-		return NewTextErrorResponse(fmt.Sprintf("invalid parameters: %v", err)), nil
-	}
-
-	provider := strings.ToLower(params.Provider)
-	action := strings.ToLower(params.Action)
-
-	// Provider-specific actions
-	validActions := map[string][]string{
-		"aws":       {"lambda_invoke", "lambda_create", "lambda_update", "s3_upload", "s3_download", "s3_list", "dynamodb_put", "dynamodb_get", "dynamodb_query", "ecs_deploy", "cloudformation_deploy", "secrets_get", "secrets_put"},
-		"gcp":       {"cloud_function_deploy", "cloud_function_invoke", "cloud_run_deploy", "cloud_run_invoke", "storage_upload", "storage_download", "firestore_write", "firestore_read", "secret_get", "secret_put"},
-		"azure":     {"function_deploy", "function_invoke", "container_app_deploy", "storage_upload", "storage_download", "keyvault_get", "keyvault_set"},
-		"cloudflare": {"worker_deploy", "worker_tail", "dns_create", "dns_list", "dns_delete", "pages_deploy", "kv_put", "kv_get", "r2_upload", "r2_download"},
-		"vercel":    {"deploy", "deployments_list", "deployment_get", "logs_get", "domains_list", "env_get", "env_set"},
-		"netlify":   {"deploy", "deploys_list", "deploy_get", "functions_invoke", "dns_list", "dns_create", "env_get", "env_set"},
-		"heroku":    {"app_create", "app_deploy", "app_logs", "app_restart", "config_get", "config_set", "addons_list", "run_command"},
-	}
-
-	if actions, ok := validActions[provider]; ok {
-		found := false
-		for _, a := range actions {
-			if a == action {
-				found = true
-				break
-			}
-		}
-		if !found {
-			return NewTextErrorResponse(fmt.Sprintf("unknown action %q for provider %q. Valid actions: %s", action, provider, strings.Join(actions, ", "))), nil
-		}
-	}
-
-	// Get credentials from env if not provided
-	token := params.Token
-	if token == "" {
-		switch provider {
-		case "aws":
-			token = getEnvOrDefault("AWS_ACCESS_KEY_ID", "") + ":" + getEnvOrDefault("AWS_SECRET_ACCESS_KEY", "")
-		case "gcp":
-			token = getEnvOrDefault("GCP_SERVICE_ACCOUNT_KEY", "")
-		case "azure":
-			token = getEnvOrDefault("AZURE_CLIENT_ID", "") + ":" + getEnvOrDefault("AZURE_CLIENT_SECRET", "") + ":" + getEnvOrDefault("AZURE_TENANT_ID", "")
-		case "cloudflare":
-			token = getEnvOrDefault("CLOUDFLARE_API_TOKEN", "")
-		case "vercel":
-			token = getEnvOrDefault("VERCEL_TOKEN", "")
-		case "netlify":
-			token = getEnvOrDefault("NETLIFY_AUTH_TOKEN", "")
-		case "heroku":
-			token = getEnvOrDefault("HEROKU_API_KEY", "")
-		}
-	}
-
-	if token == "" && provider != "docker" && provider != "k8s" {
-		return NewTextErrorResponse(fmt.Sprintf("no credentials for %s (set env vars or provide token)", provider)), nil
-	}
-
-	result := fmt.Sprintf(
-		"Cloud operation queued:\n- Provider: %s\n- Action: %s\n- Region: %s\n- Params: %v\n\nNote: This is a stub. Real implementation would use provider SDKs/CLIs.",
-		provider,
-		action,
-		defaultString(params.Region, "default"),
-		params.Params,
-	)
-
-	return NewTextResponse(result), nil
-}
-
-type DockerTool struct{}
-
-func NewDockerTool() BaseTool {
-	return &DockerTool{}
-}
-
-func (t *DockerTool) Info() ToolInfo {
-	return ToolInfo{
-		Name:        DockerToolName,
-		Description: "Docker operations: build, run, push, pull, compose, image management, container management.",
-		Parameters: map[string]any{
-			"type": "object",
-			"properties": map[string]any{
-				"action": map[string]any{
-					"type":        "string",
-					"description": "Docker action",
-					"enum":        []string{"build", "run", "push", "pull", "compose_up", "compose_down", "images_list", "containers_list", "container_logs", "container_exec", "prune", "tag", "login", "logout"},
-				},
-				"image": map[string]any{
-					"type":        "string",
-					"description": "Image name/tag",
-				},
-				"dockerfile": map[string]any{
-					"type":        "string",
-					"description": "Path to Dockerfile",
-				},
-				"context": map[string]any{
-					"type":        "string",
-					"description": "Build context path",
-				},
-				"tag": map[string]any{
-					"type":        "string",
-					"description": "Tag for image",
+					"description": "Subcommand passed to the provider CLI (e.g. 'ec2 describe-instances', 's3 ls', 'projects list')",
 				},
 				"args": map[string]any{
 					"type":        "array",
 					"items":       map[string]any{"type": "string"},
-					"description": "Build args",
+					"description": "Additional arguments",
 				},
-				"ports": map[string]any{
-					"type":        "array",
-					"items":       map[string]any{"type": "string"},
-					"description": "Port mappings (e.g., 8080:80)",
-				},
-				"env": map[string]any{
-					"type":        "object",
-					"description": "Environment variables",
-				},
-				"volumes": map[string]any{
-					"type":        "array",
-					"items":       map[string]any{"type": "string"},
-					"description": "Volume mounts",
-				},
-				"detach": map[string]any{
-					"type":        "boolean",
-					"description": "Run in background",
-				},
-				"compose_file": map[string]any{
+				"region": map[string]any{
 					"type":        "string",
-					"description": "Docker Compose file path",
-				},
-			},
-			"required": []string{"action"},
-		},
-	}
-}
-
-func (t *DockerTool) Run(ctx context.Context, call ToolCall) (ToolResponse, error) {
-	var params map[string]any
-	if err := json.Unmarshal([]byte(call.Input), &params); err != nil {
-		return NewTextErrorResponse(fmt.Sprintf("invalid parameters: %v", err)), nil
-	}
-
-	action := params["action"]
-	if action == nil {
-		return NewTextErrorResponse("action is required"), nil
-	}
-
-	result := fmt.Sprintf("Docker %s queued with params: %v\nNote: This is a stub. Real implementation would use Docker CLI or API.", action, params)
-	return NewTextResponse(result), nil
-}
-
-type KubernetesTool struct{}
-
-func NewKubernetesTool() BaseTool {
-	return &KubernetesTool{}
-}
-
-func (t *KubernetesTool) Info() ToolInfo {
-	return ToolInfo{
-		Name:        KubernetesToolName,
-		Description: "Kubernetes operations: apply, delete, get, logs, exec, port-forward, scale, rollout, helm.",
-		Parameters: map[string]any{
-			"type": "object",
-			"properties": map[string]any{
-				"action": map[string]any{
-					"type":        "string",
-					"description": "Kubernetes action",
-					"enum":        []string{"apply", "delete", "get", "describe", "logs", "exec", "port_forward", "scale", "rollout_restart", "rollout_status", "rollout_undo", "helm_install", "helm_upgrade", "helm_uninstall", "helm_list", "context_list", "context_use"},
-				},
-				"resource": map[string]any{
-					"type":        "string",
-					"description": "Resource type (deployment, service, pod, configmap, secret, ingress, etc.)",
-				},
-				"name": map[string]any{
-					"type":        "string",
-					"description": "Resource name",
-				},
-				"namespace": map[string]any{
-					"type":        "string",
-					"description": "Namespace",
-				},
-				"file": map[string]any{
-					"type":        "string",
-					"description": "YAML file path (for apply/delete)",
-				},
-				"selector": map[string]any{
-					"type":        "string",
-					"description": "Label selector",
-				},
-				"replicas": map[string]any{
-					"type":        "integer",
-					"description": "Number of replicas (for scale)",
-				},
-				"container": map[string]any{
-					"type":        "string",
-					"description": "Container name (for logs/exec)",
-				},
-				"command": map[string]any{
-					"type":        "array",
-					"items":       map[string]any{"type": "string"},
-					"description": "Command for exec",
-				},
-				"port": map[string]any{
-					"type":        "string",
-					"description": "Port for port-forward (local:remote)",
-				},
-				"chart": map[string]any{
-					"type":        "string",
-					"description": "Helm chart name/path",
-				},
-				"values": map[string]any{
-					"type":        "object",
-					"description": "Helm values",
-				},
-				"release": map[string]any{
-					"type":        "string",
-					"description": "Helm release name",
-				},
-				"context": map[string]any{
-					"type":        "string",
-					"description": "Kubeconfig context",
-				},
-			},
-			"required": []string{"action"},
-		},
-	}
-}
-
-func (t *KubernetesTool) Run(ctx context.Context, call ToolCall) (ToolResponse, error) {
-	var params map[string]any
-	if err := json.Unmarshal([]byte(call.Input), &params); err != nil {
-		return NewTextErrorResponse(fmt.Sprintf("invalid parameters: %v", err)), nil
-	}
-
-	action := params["action"]
-	if action == nil {
-		return NewTextErrorResponse("action is required"), nil
-	}
-
-	result := fmt.Sprintf("Kubernetes %s queued with params: %v\nNote: This is a stub. Real implementation would use kubectl/Helm CLI or client-go.", action, params)
-	return NewTextResponse(result), nil
-}
-
-type CICDParams struct {
-	Provider string         `json:"provider"`
-	Action   string         `json:"action"`
-	Project  string         `json:"project,omitempty"`
-	Params   map[string]any `json:"params,omitempty"`
-	Token    string         `json:"token,omitempty"`
-	APIURL   string         `json:"api_url,omitempty"`
-}
-
-type CICDTool struct {
-	httpClient *http.Client
-}
-
-func NewCICDTool() BaseTool {
-	return &CICDTool{
-		httpClient: &http.Client{},
-	}
-}
-
-func (t *CICDTool) Info() ToolInfo {
-	return ToolInfo{
-		Name:        "cicd",
-		Description: "CI/CD platform operations (GitHub Actions, GitLab CI, CircleCI, Buildkite, Jenkins, etc.). Actions: trigger, list, get, cancel, rerun, logs, artifacts.",
-		Parameters: map[string]any{
-			"type": "object",
-			"properties": map[string]any{
-				"provider": map[string]any{
-					"type":        "string",
-					"description": "CI/CD provider",
-					"enum":        []string{"github_actions", "gitlab_ci", "circleci", "buildkite", "jenkins", "teamcity", "drone", "woodpecker"},
-				},
-				"action": map[string]any{
-					"type":        "string",
-					"description": "Action: trigger, list, get, cancel, rerun, logs, artifacts, workflows_list",
-					"enum":        []string{"trigger", "list", "get", "cancel", "rerun", "logs", "artifacts", "workflows_list"},
-				},
-				"project": map[string]any{
-					"type":        "string",
-					"description": "Project/repo identifier (owner/repo for GitHub, group/project for GitLab)",
-				},
-				"params": map[string]any{
-					"type":        "object",
-					"description": "Action-specific parameters (branch, tag, inputs, etc.)",
-				},
-				"token": map[string]any{
-					"type":        "string",
-					"description": "API token",
-				},
-				"api_url": map[string]any{
-					"type":        "string",
-					"description": "Custom API endpoint",
+					"description": "Region for regional resources (appended as --region where supported)",
 				},
 			},
 			"required": []string{"provider", "action"},
@@ -378,51 +67,329 @@ func (t *CICDTool) Info() ToolInfo {
 	}
 }
 
-func (t *CICDTool) Run(ctx context.Context, call ToolCall) (ToolResponse, error) {
-	var params CICDParams
-	if err := json.Unmarshal([]byte(call.Input), &params); err != nil {
+type cloudParams struct {
+	Provider string   `json:"provider"`
+	Action   string   `json:"action"`
+	Args     []string `json:"args"`
+	Region   string   `json:"region"`
+}
+
+// cliFor maps a provider onto the binary and base subcommands that reach it.
+func cliFor(provider string) (string, []string, bool) {
+	switch strings.ToLower(provider) {
+	case "aws":
+		return "aws", nil, true
+	case "gcp", "google":
+		return "gcloud", nil, true
+	case "azure":
+		return "az", nil, true
+	case "cloudflare":
+		return "wrangler", nil, true
+	case "vercel":
+		return "vercel", nil, true
+	case "netlify":
+		return "netlify", nil, true
+	case "heroku":
+		return "heroku", nil, true
+	default:
+		return "", nil, false
+	}
+}
+
+func (t *CloudTool) Run(ctx context.Context, call ToolCall) (ToolResponse, error) {
+	var p cloudParams
+	if err := json.Unmarshal([]byte(call.Input), &p); err != nil {
 		return NewTextErrorResponse(fmt.Sprintf("invalid parameters: %v", err)), nil
 	}
 
-	provider := strings.ToLower(params.Provider)
-	action := strings.ToLower(params.Action)
+	binary, base, ok := cliFor(p.Provider)
+	if !ok {
+		return NewTextErrorResponse(fmt.Sprintf("unsupported provider: %s", p.Provider)), nil
+	}
+	if strings.TrimSpace(p.Action) == "" {
+		return NewTextErrorResponse("action is required"), nil
+	}
 
-	validActions := []string{"trigger", "list", "get", "cancel", "rerun", "logs", "artifacts", "workflows_list"}
-	found := false
-	for _, a := range validActions {
-		if a == action {
-			found = true
-			break
+	// Split the action so multi-word subcommands survive as separate arguments.
+	args := append(base, strings.Fields(p.Action)...)
+	args = append(args, p.Args...)
+	if p.Region != "" {
+		args = append(args, "--region", p.Region)
+	}
+
+	sessionID, messageID := sessionContext(ctx)
+	if err := t.runner.ask(ctx, sessionID, messageID, CloudToolName,
+		fmt.Sprintf("%s %s", binary, strings.Join(args, " ")), p.Action, map[string]any{
+			"provider": p.Provider, "action": p.Action,
+		}); err != nil {
+		return NewTextErrorResponse(err.Error()), nil
+	}
+
+	res, err := t.runner.exec(ctx, binary, args...)
+	if err != nil {
+		return NewTextErrorResponse(err.Error()), nil
+	}
+	return NewTextResponse(res.String()), nil
+}
+
+// KubernetesTool drives kubectl and Helm.
+type KubernetesTool struct {
+	runner *runner
+}
+
+func NewKubernetesTool(permissions permission.Service) BaseTool {
+	return &KubernetesTool{runner: newRunner(permissions)}
+}
+
+func (t *KubernetesTool) Info() ToolInfo {
+	return ToolInfo{
+		Name: KubernetesToolName,
+		Description: "Interact with Kubernetes clusters through kubectl and Helm. " +
+			"Actions: apply, delete, get, describe, logs, exec, port_forward, scale, " +
+			"rollout_restart, rollout_status, rollout_undo, context_list, context_use, " +
+			"helm_install, helm_upgrade, helm_uninstall, helm_list, helm_status.",
+		Parameters: map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"action": map[string]any{
+					"type": "string",
+					"enum": []string{
+						"apply", "delete", "get", "describe", "logs", "exec", "port_forward",
+						"scale", "rollout_restart", "rollout_status", "rollout_undo",
+						"context_list", "context_use",
+						"helm_install", "helm_upgrade", "helm_uninstall", "helm_list", "helm_status",
+					},
+				},
+				"resource":         map[string]any{"type": "string", "description": "Resource type (deployment, service, pod, configmap, secret, ingress...)"},
+				"name":             map[string]any{"type": "string", "description": "Resource name"},
+				"namespace":        map[string]any{"type": "string", "description": "Namespace (default: current)"},
+				"file":             map[string]any{"type": "string", "description": "Manifest file for apply/delete (-f)"},
+				"selector":         map[string]any{"type": "string", "description": "Label selector for get/delete/logs (-l)"},
+				"replicas":         map[string]any{"type": "integer", "description": "Replica count for scale"},
+				"container":        map[string]any{"type": "string", "description": "Container name for logs/exec"},
+				"follow":           map[string]any{"type": "boolean", "description": "Follow log output"},
+				"tail":             map[string]any{"type": "integer", "description": "Number of log lines"},
+				"since":            map[string]any{"type": "string", "description": "Only logs newer than this duration, e.g. 10m"},
+				"command":          map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "description": "Command for exec"},
+				"port":             map[string]any{"type": "string", "description": "Port mapping for port_forward, e.g. 8080:80"},
+				"chart":            map[string]any{"type": "string", "description": "Helm chart reference"},
+				"release":          map[string]any{"type": "string", "description": "Helm release name"},
+				"values":           map[string]any{"type": "object", "description": "Helm values overrides"},
+				"value_files":      map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "description": "Helm values files (-f)"},
+				"create_namespace": map[string]any{"type": "boolean", "description": "Create the namespace for helm_install/upgrade"},
+				"atomic":           map[string]any{"type": "boolean", "description": "Roll back the release if helm_upgrade fails"},
+				"wait":             map[string]any{"type": "boolean", "description": "Wait for the operation to finish"},
+				"context":          map[string]any{"type": "string", "description": "Kubeconfig context"},
+			},
+			"required": []string{"action"},
+		},
+	}
+}
+
+type k8sParams struct {
+	Action          string         `json:"action"`
+	Resource        string         `json:"resource"`
+	Name            string         `json:"name"`
+	Namespace       string         `json:"namespace"`
+	File            string         `json:"file"`
+	Selector        string         `json:"selector"`
+	Replicas        int            `json:"replicas"`
+	Container       string         `json:"container"`
+	Follow          bool           `json:"follow"`
+	Tail            int            `json:"tail"`
+	Since           string         `json:"since"`
+	Command         []string       `json:"command"`
+	Port            string         `json:"port"`
+	Chart           string         `json:"chart"`
+	Release         string         `json:"release"`
+	Values          map[string]any `json:"values"`
+	ValueFiles      []string       `json:"value_files"`
+	CreateNamespace bool           `json:"create_namespace"`
+	Atomic          bool           `json:"atomic"`
+	Wait            bool           `json:"wait"`
+	Context         string         `json:"context"`
+}
+
+func (t *KubernetesTool) Run(ctx context.Context, call ToolCall) (ToolResponse, error) {
+	var p k8sParams
+	if err := json.Unmarshal([]byte(call.Input), &p); err != nil {
+		return NewTextErrorResponse(fmt.Sprintf("invalid parameters: %v", err)), nil
+	}
+
+	binary, args, err := k8sCommand(p)
+	if err != nil {
+		return NewTextErrorResponse(err.Error()), nil
+	}
+
+	sessionID, messageID := sessionContext(ctx)
+	if err := t.runner.ask(ctx, sessionID, messageID, KubernetesToolName,
+		fmt.Sprintf("%s %s", binary, strings.Join(args, " ")), p.Action, map[string]any{
+			"action": p.Action, "resource": p.Resource, "name": p.Name, "namespace": p.Namespace,
+		}); err != nil {
+		return NewTextErrorResponse(err.Error()), nil
+	}
+
+	res, err := t.runner.exec(ctx, binary, args...)
+	if err != nil {
+		return NewTextErrorResponse(err.Error()), nil
+	}
+	return NewTextResponse(res.String()), nil
+}
+
+// k8sCommand maps an action onto the real kubectl or Helm invocation.
+func k8sCommand(p k8sParams) (string, []string, error) {
+	action := strings.ToLower(p.Action)
+
+	// Helm actions share a prefix so the branch is easy to scan.
+	if strings.HasPrefix(action, "helm_") {
+		sub := strings.Replace(action, "helm_", "", 1)
+		args := []string{sub}
+		if p.Release != "" {
+			args = append(args, p.Release)
+		} else if sub != "list" {
+			return "", nil, fmt.Errorf("release is required for helm_%s", sub)
 		}
-	}
-	if !found {
-		return NewTextErrorResponse(fmt.Sprintf("unknown action %q. Valid: %s", action, strings.Join(validActions, ", "))), nil
-	}
-
-	if params.Project == "" && action != "workflows_list" {
-		return NewTextErrorResponse("project is required"), nil
-	}
-
-	token := params.Token
-	if token == "" {
-		switch provider {
-		case "github_actions":
-			token = getEnvOrDefault("GITHUB_TOKEN", "")
-		case "gitlab_ci":
-			token = getEnvOrDefault("GITLAB_TOKEN", "")
-		case "circleci":
-			token = getEnvOrDefault("CIRCLECI_TOKEN", "")
-		case "buildkite":
-			token = getEnvOrDefault("BUILDKITE_TOKEN", "")
-		case "jenkins":
-			token = getEnvOrDefault("JENKINS_API_TOKEN", "")
+		if p.CreateNamespace {
+			args = append(args, "--create-namespace")
 		}
+		if p.Namespace != "" {
+			args = append(args, "--namespace", p.Namespace)
+		}
+		if p.Atomic {
+			args = append(args, "--atomic")
+		}
+		if p.Wait {
+			args = append(args, "--wait")
+		}
+		for _, f := range p.ValueFiles {
+			args = append(args, "-f", f)
+		}
+		for _, k := range sortedKeys(p.Values) {
+			args = append(args, "--set", fmt.Sprintf("%s=%v", k, p.Values[k]))
+		}
+		if sub == "install" || sub == "upgrade" {
+			if p.Chart == "" {
+				return "", nil, fmt.Errorf("chart is required for helm_%s", sub)
+			}
+			args = append(args, p.Chart)
+		}
+		return "helm", args, nil
 	}
 
-	result := fmt.Sprintf(
-		"CI/CD operation queued:\n- Provider: %s\n- Action: %s\n- Project: %s\n- Params: %v\n\nNote: This is a stub. Real implementation would call provider APIs.",
-		provider, action, params.Project, params.Params,
-	)
+	// Rollout actions are two-word subcommands, so they are handled before the
+	// generic flag prefix is built from the single-word action.
+	if strings.HasPrefix(action, "rollout_") {
+		if p.Resource == "" || p.Name == "" {
+			return "", nil, fmt.Errorf("resource and name are required for %s", action)
+		}
+		sub := strings.Replace(action, "rollout_", "", 1)
+		args := []string{"rollout", sub}
+		if p.Context != "" {
+			args = append(args, "--context", p.Context)
+		}
+		if p.Namespace != "" {
+			args = append(args, "--namespace", p.Namespace)
+		}
+		return "kubectl", append(args, p.Resource, p.Name), nil
+	}
 
-	return NewTextResponse(result), nil
+	args := []string{action}
+	if p.Context != "" {
+		args = append(args, "--context", p.Context)
+	}
+	if p.Namespace != "" {
+		args = append(args, "--namespace", p.Namespace)
+	}
+	if p.Selector != "" {
+		args = append(args, "-l", p.Selector)
+	}
+	if p.File != "" {
+		args = append(args, "-f", p.File)
+	}
+
+	switch action {
+	case "apply":
+		if p.File == "" {
+			return "", nil, fmt.Errorf("file is required for apply")
+		}
+		return "kubectl", args, nil
+
+	case "delete":
+		if p.Resource == "" {
+			return "", nil, fmt.Errorf("resource is required for delete")
+		}
+		if p.Name == "" {
+			return "", nil, fmt.Errorf("name is required for delete")
+		}
+		return "kubectl", append(args, p.Resource, p.Name), nil
+
+	case "get", "describe":
+		if p.Resource == "" {
+			return "", nil, fmt.Errorf("resource is required for %s", action)
+		}
+		if p.Name != "" {
+			args = append(args, p.Name)
+		}
+		return "kubectl", append(args, p.Resource), nil
+
+	case "logs":
+		if p.Name == "" {
+			return "", nil, fmt.Errorf("name (pod) is required for logs")
+		}
+		args = append(args, p.Name)
+		if p.Container != "" {
+			args = append(args, "-c", p.Container)
+		}
+		if p.Follow {
+			args = append(args, "-f")
+		}
+		if p.Tail > 0 {
+			args = append(args, "--tail", fmt.Sprint(p.Tail))
+		}
+		if p.Since != "" {
+			args = append(args, "--since", p.Since)
+		}
+		return "kubectl", args, nil
+
+	case "exec":
+		if p.Name == "" {
+			return "", nil, fmt.Errorf("name (pod) is required for exec")
+		}
+		if len(p.Command) == 0 {
+			return "", nil, fmt.Errorf("command is required for exec")
+		}
+		if p.Container != "" {
+			args = append(args, "-c", p.Container)
+		}
+		args = append(args, p.Name, "--")
+		return "kubectl", append(args, p.Command...), nil
+
+	case "port_forward":
+		if p.Name == "" || p.Port == "" {
+			return "", nil, fmt.Errorf("name and port are required for port_forward")
+		}
+		return "kubectl", []string{"port-forward", p.Name, p.Port}, nil
+
+	case "scale":
+		if p.Resource == "" || p.Name == "" {
+			return "", nil, fmt.Errorf("resource and name are required for scale")
+		}
+		if p.Replicas <= 0 {
+			return "", nil, fmt.Errorf("replicas must be greater than zero")
+		}
+		return "kubectl", append(args, p.Resource, p.Name,
+			"--replicas="+fmt.Sprint(p.Replicas)), nil
+
+	case "context_list":
+		return "kubectl", []string{"config", "get-contexts"}, nil
+
+	case "context_use":
+		if p.Context == "" {
+			return "", nil, fmt.Errorf("context is required for context_use")
+		}
+		return "kubectl", []string{"config", "use-context", p.Context}, nil
+
+	default:
+		return "", nil, fmt.Errorf("unknown action: %s", p.Action)
+	}
 }

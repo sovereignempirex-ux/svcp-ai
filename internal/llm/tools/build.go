@@ -4,97 +4,66 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"net/http"
-	"os"
-	"path/filepath"
 	"strings"
+
+	"github.com/svpc-ai/svpc/internal/permission"
 )
 
 const (
-	BuildToolName      = "build"
-	SignToolName       = "sign"
-	NotarizeToolName   = "notarize"
-	PackageToolName    = "package"
+	BuildToolName    = "build"
+	SignToolName     = "sign"
+	NotarizeToolName = "notarize"
+	PackageToolName  = "package"
 )
 
-type BuildParams struct {
-	Platform     string         `json:"platform"`
-	Action       string         `json:"action"`
-	ProjectPath  string         `json:"project_path,omitempty"`
-	Config       map[string]any `json:"config,omitempty"`
-	OutputPath   string         `json:"output_path,omitempty"`
-	Version      string         `json:"version,omitempty"`
-	Arch         string         `json:"arch,omitempty"`
-	Target       string         `json:"target,omitempty"`
-	SignConfig   map[string]any `json:"sign_config,omitempty"`
-	NotarizeCred map[string]any `json:"notarize_credentials,omitempty"`
-	Token        string         `json:"token,omitempty"`
+type buildParams struct {
+	Platform    string            `json:"platform"`
+	Action      string            `json:"action"`
+	ProjectPath string            `json:"project_path"`
+	Config      map[string]any    `json:"config"`
+	OutputPath  string            `json:"output_path"`
+	Version     string            `json:"version"`
+	Arch        string            `json:"arch"`
+	Target      string            `json:"target"`
+	LdFlags     string            `json:"ldflags,omitempty"`
+	Env         map[string]string `json:"env,omitempty"`
+	NoTests     bool              `json:"no_tests,omitempty"`
 }
 
+// BuildTool compiles a project for one or more platforms. The framework is
+// detected from the files on disk, so the model does not have to guess.
 type BuildTool struct {
-	httpClient *http.Client
+	runner *runner
 }
 
-func NewBuildTool() BaseTool {
-	return &BuildTool{
-		httpClient: &http.Client{},
-	}
+func NewBuildTool(permissions permission.Service) BaseTool {
+	return &BuildTool{runner: newRunner(permissions)}
 }
 
 func (t *BuildTool) Info() ToolInfo {
 	return ToolInfo{
-		Name:        BuildToolName,
-		Description: "Cross-platform build tool for Android (APK/AAB), Windows (EXE/MSI), Linux (AppImage/deb/rpm/tar.gz), macOS (DMG/pkg/app), iOS (IPA). Supports Go, Flutter, React Native, Electron, Tauri, Kotlin/Swift native, and more.",
+		Name: BuildToolName,
+		Description: "Build a project for a target platform. Platforms: android, windows, linux, " +
+			"macos, ios, all. Actions: build, clean, test, lint, doctor. " +
+			"The framework (go, flutter, react-native, electron, tauri, rust, node, kotlin, swift) " +
+			"is detected automatically unless config.framework says otherwise.",
 		Parameters: map[string]any{
 			"type": "object",
 			"properties": map[string]any{
 				"platform": map[string]any{
-					"type":        "string",
-					"description": "Target platform",
-					"enum":        []string{"android", "windows", "linux", "macos", "ios", "all"},
+					"type": "string",
+					"enum": []string{"android", "windows", "linux", "macos", "ios", "all"},
 				},
 				"action": map[string]any{
-					"type":        "string",
-					"description": "Build action",
-					"enum":        []string{"build", "clean", "test", "lint", "package", "sign", "notarize", "release", "doctor"},
+					"type": "string",
+					"enum": []string{"build", "clean", "test", "lint", "doctor"},
 				},
-				"project_path": map[string]any{
-					"type":        "string",
-					"description": "Path to project root (default: current directory)",
-				},
-				"config": map[string]any{
-					"type":        "object",
-					"description": "Platform-specific build configuration",
-				},
-				"output_path": map[string]any{
-					"type":        "string",
-					"description": "Output directory for artifacts",
-				},
-				"version": map[string]any{
-					"type":        "string",
-					"description": "Version string (e.g., 1.0.0)",
-				},
-				"arch": map[string]any{
-					"type":        "string",
-					"description": "Target architecture (amd64, arm64, 386, arm, universal)",
-					"enum":        []string{"amd64", "arm64", "386", "arm", "universal", "all"},
-				},
-				"target": map[string]any{
-					"type":        "string",
-					"description": "Build target/framework (go, flutter, electron, tauri, react-native, native, java, kotlin, swift)",
-				},
-				"sign_config": map[string]any{
-					"type":        "object",
-					"description": "Code signing configuration (certificates, keys, provisioning profiles)",
-				},
-				"notarize_credentials": map[string]any{
-					"type":        "object",
-					"description": "Apple notarization credentials (Apple ID, password, team ID)",
-				},
-				"token": map[string]any{
-					"type":        "string",
-					"description": "CI/CD token for artifact upload",
-				},
+				"project_path": map[string]any{"type": "string", "description": "Project root (default: working directory)"},
+				"config":       map[string]any{"type": "object", "description": "Overrides, e.g. {\"framework\":\"go\"}"},
+				"version":      map[string]any{"type": "string", "description": "Version string, injected into Go builds"},
+				"arch":         map[string]any{"type": "string", "enum": []string{"amd64", "arm64", "386", "arm", "universal", "all"}},
+				"ldflags":      map[string]any{"type": "string", "description": "Extra -ldflags for Go builds"},
+				"no_tests":     map[string]any{"type": "boolean", "description": "Skip the test step after a build"},
 			},
 			"required": []string{"platform", "action"},
 		},
@@ -102,777 +71,492 @@ func (t *BuildTool) Info() ToolInfo {
 }
 
 func (t *BuildTool) Run(ctx context.Context, call ToolCall) (ToolResponse, error) {
-	var params BuildParams
-	if err := json.Unmarshal([]byte(call.Input), &params); err != nil {
+	var p buildParams
+	if err := json.Unmarshal([]byte(call.Input), &p); err != nil {
 		return NewTextErrorResponse(fmt.Sprintf("invalid parameters: %v", err)), nil
 	}
 
-	if params.ProjectPath == "" {
-		params.ProjectPath = "."
+	if strings.TrimSpace(p.Platform) == "" || strings.TrimSpace(p.Action) == "" {
+		return NewTextErrorResponse("platform and action are required"), nil
 	}
 
-	action := strings.ToLower(params.Action)
-
-	// Detect project type if not specified
-	if params.Config == nil {
-		params.Config = map[string]any{}
+	dir := p.ProjectPath
+	if dir == "" {
+		dir = t.runner.workingDir
 	}
 
-	builder := &platformBuilder{
-		tool:       t,
-		params:     params,
-		projectDir: params.ProjectPath,
+	// A project_path pointing somewhere else is worth its own confirmation.
+	sessionID, messageID := sessionContext(ctx)
+	if p.ProjectPath != "" {
+		if err := t.runner.ask(ctx, sessionID, messageID, BuildToolName,
+			fmt.Sprintf("build %s in %s", p.Platform, p.ProjectPath), p.Action,
+			map[string]any{"platform": p.Platform, "path": p.ProjectPath}); err != nil {
+			return NewTextErrorResponse(err.Error()), nil
+		}
 	}
 
-	// Detect framework after builder is created
-	if _, ok := params.Config["framework"]; !ok {
-		params.Config["framework"] = builder.detectFramework(params.ProjectPath)
+	framework := detectFramework(dir, stringField(p.Config, "framework"))
+
+	platforms := []string{strings.ToLower(p.Platform)}
+	if platforms[0] == "all" {
+		platforms = []string{"android", "windows", "linux", "macos", "ios"}
 	}
 
-	var result string
-	var err error
+	var out strings.Builder
+	ran := 0
+	var failures int
+
+	for _, platform := range platforms {
+		result, err := runBuild(ctx, t.runner, dir, framework, platform, p)
+		switch {
+		case err != nil:
+			fmt.Fprintf(&out, "== %s ==\n%s\n\n", platform, err.Error())
+			failures++
+		case result == "":
+			// Nothing to do for this platform/framework combination.
+			continue
+		default:
+			fmt.Fprintf(&out, "== %s ==\n%s\n\n", platform, result)
+			ran++
+		}
+	}
+
+	if out.Len() == 0 {
+		return NewTextResponse(fmt.Sprintf(
+			"Nothing to %s: no supported build path for framework %q on %s.",
+			p.Action, framework, p.Platform)), nil
+	}
+	if failures > 0 {
+		return NewTextResponse(out.String()), nil
+	}
+
+	// Testing after a successful build is what makes a build meaningful.
+	if p.Action == "build" && !p.NoTests {
+		if cmd := frameworkTest(dir, framework); cmd != nil {
+			if res, err := t.runner.execIn(ctx, dir, cmd[0], cmd[1:]...); err == nil {
+				out.WriteString("== tests ==\n")
+				if res.ExitCode == 0 {
+					if s := strings.TrimSpace(res.Stdout); s != "" {
+						out.WriteString(s + "\n")
+					} else {
+						out.WriteString("passed\n")
+					}
+				} else {
+					out.WriteString("failed\n" + res.String() + "\n")
+				}
+			}
+		}
+	}
+
+	ran++
+	if ran == 0 {
+		return NewTextErrorResponse("no build step ran"), nil
+	}
+	return NewTextResponse(out.String()), nil
+}
+
+// runBuild executes the build for one platform.
+func runBuild(ctx context.Context, r *runner, dir, framework, platform string, p buildParams) (string, error) {
+	action := strings.ToLower(p.Action)
+	arch := orDefault(p.Arch, "all")
 
 	switch action {
-	case "build":
-		result, err = builder.build(ctx)
-	case "clean":
-		result, err = builder.clean(ctx)
-	case "test":
-		result, err = builder.test(ctx)
-	case "lint":
-		result, err = builder.lint(ctx)
-	case "package":
-		result, err = builder.packageArtifacts(ctx)
-	case "sign":
-		result, err = builder.sign(ctx)
-	case "notarize":
-		result, err = builder.notarize(ctx)
-	case "release":
-		result, err = builder.release(ctx)
 	case "doctor":
-		result, err = builder.doctor(ctx)
-	default:
-		return NewTextErrorResponse(fmt.Sprintf("unknown action: %s", action)), nil
-	}
-
-	if err != nil {
-		return NewTextErrorResponse(fmt.Sprintf("build failed: %v", err)), nil
-	}
-
-	return NewTextResponse(result), nil
-}
-
-type platformBuilder struct {
-	tool       *BuildTool
-	params     BuildParams
-	projectDir string
-}
-
-func (b *platformBuilder) detectFramework(projectPath string) string {
-	// Check for various project types
-	checks := []struct {
-		file      string
-		framework string
-	}{
-		{"pubspec.yaml", "flutter"},
-		{"package.json", "node"},
-		{"go.mod", "go"},
-		{"Cargo.toml", "rust"},
-		{"build.gradle", "android"},
-		{"build.gradle.kts", "android"},
-		{"settings.gradle", "android"},
-		{"Podfile", "ios"},
-		{"Package.swift", "swift"},
-		{"tauri.conf.json", "tauri"},
-		{"electron-builder.json", "electron"},
-		{"electron-builder.yml", "electron"},
-		{"wails.json", "wails"},
-		{"fyne.yaml", "fyne"},
-		{"gyro.yaml", "gyro"},
-		{"makefile", "make"},
-		{"Makefile", "make"},
-	}
-
-	for _, check := range checks {
-		if _, err := os.Stat(filepath.Join(projectPath, check.file)); err == nil {
-			// For package.json, check for specific frameworks
-			if check.file == "package.json" {
-				return b.detectNodeFramework(projectPath)
-			}
-			return check.framework
+		return doctor(r, dir, framework)
+	case "clean":
+		cmd := frameworkClean(dir, framework)
+		if cmd == nil {
+			return "", fmt.Errorf("clean is not defined for %s", framework)
 		}
+		res, err := r.execIn(ctx, dir, cmd[0], cmd[1:]...)
+		return joinResult(res, err), nil
+	case "lint":
+		cmd := frameworkLint(dir, framework)
+		if cmd == nil {
+			return "", fmt.Errorf("lint is not defined for %s", framework)
+		}
+		res, err := r.execIn(ctx, dir, cmd[0], cmd[1:]...)
+		return joinResult(res, err), nil
+	case "test":
+		cmd := frameworkTest(dir, framework)
+		if cmd == nil {
+			return "", fmt.Errorf("test is not defined for %s", framework)
+		}
+		res, err := r.execIn(ctx, dir, cmd[0], cmd[1:]...)
+		return joinResult(res, err), nil
+	case "build":
+		// fall through
+	default:
+		return "", fmt.Errorf("unknown action: %s", action)
+	}
+
+	steps, err := buildSteps(dir, framework, platform, arch, p.Version, p.LdFlags)
+	if err != nil {
+		return "", err
+	}
+
+	var out strings.Builder
+	for _, step := range steps {
+		res, err := r.execIn(ctx, dir, step[0], step[1:]...)
+		if err != nil {
+			return out.String(), err
+		}
+		fmt.Fprintf(&out, "$ %s %s\n", step[0], strings.Join(step[1:], " "))
+		if s := strings.TrimSpace(res.Stdout); s != "" {
+			out.WriteString(s + "\n")
+		}
+		if s := strings.TrimSpace(res.Stderr); s != "" {
+			out.WriteString(s + "\n")
+		}
+		if res.ExitCode != 0 {
+			return out.String(), fmt.Errorf("build failed with exit code %d", res.ExitCode)
+		}
+	}
+	return out.String(), nil
+}
+
+func joinResult(res commandResult, err error) string {
+	if err != nil {
+		return err.Error()
+	}
+	return res.String()
+}
+
+// doctor reports whether the toolchain for a framework is present.
+func doctor(r *runner, dir, framework string) (string, error) {
+	checks := map[string][]string{
+		"go":           {"go", "version"},
+		"flutter":      {"flutter", "--version"},
+		"rust":         {"cargo", "--version"},
+		"node":         {"node", "--version"},
+		"electron":     {"npm", "--version"},
+		"tauri":        {"cargo", "tauri", "--version"},
+		"kotlin":       {"java", "-version"},
+		"android":      {"gradle", "--version"},
+		"swift":        {"swift", "--version"},
+		"react-native": {"node", "--version"},
+	}
+
+	var out strings.Builder
+	fmt.Fprintf(&out, "framework: %s\nproject:   %s\n\ntoolchain:\n", framework, dir)
+
+	cmds, ok := checks[framework]
+	if !ok {
+		cmds = []string{"go", "version"}
+		fmt.Fprintf(&out, "  (no known toolchain for %s, checking go)\n", framework)
+	}
+
+	if _, err := lookPath(cmds[0]); err != nil {
+		fmt.Fprintf(&out, "  %-8s %s\n", cmds[0], "not installed")
+		return out.String(), nil
+	}
+	res, err := r.execIn(context.Background(), dir, cmds[0], cmds[1:]...)
+	if err != nil {
+		fmt.Fprintf(&out, "  %-8s error: %v\n", cmds[0], err)
+		return out.String(), nil
+	}
+	version := strings.TrimSpace(firstNonEmpty(res.Stdout, res.Stderr))
+	version = strings.SplitN(version, "\n", 2)[0]
+	fmt.Fprintf(&out, "  %-8s %s\n", cmds[0], version)
+	return out.String(), nil
+}
+
+// ---------------------------------------------------------------------------
+// Framework detection
+// ---------------------------------------------------------------------------
+
+// detectFramework infers the build system from the project files.
+func detectFramework(dir, override string) string {
+	if override != "" {
+		return strings.ToLower(override)
+	}
+
+	if fileExists(dir, "go.mod") {
+		return "go"
+	}
+	if fileExists(dir, "pubspec.yaml") {
+		return "flutter"
+	}
+	if fileExists(dir, "Cargo.toml") {
+		if fileExists(dir, "src-tauri") || fileExists(dir, "tauri.conf.json") {
+			return "tauri"
+		}
+		return "rust"
+	}
+	if fileExists(dir, "package.json") {
+		if hasDependency(dir, "electron") {
+			return "electron"
+		}
+		if hasDependency(dir, "@tauri-apps/cli") {
+			return "tauri"
+		}
+		if hasDependency(dir, "react-native") {
+			return "react-native"
+		}
+		if hasDependency(dir, "expo") {
+			return "expo"
+		}
+		return "node"
+	}
+	if fileExists(dir, "build.gradle") || fileExists(dir, "build.gradle.kts") || fileExists(dir, "settings.gradle") {
+		return "kotlin"
+	}
+	if fileExists(dir, "Package.swift") {
+		return "swift"
+	}
+	if fileExists(dir, "ios") && fileExists(dir, "android") {
+		return "flutter"
 	}
 	return "unknown"
 }
 
-func (b *platformBuilder) detectNodeFramework(projectPath string) string {
-	pkgPath := filepath.Join(projectPath, "package.json")
-	data, err := os.ReadFile(pkgPath)
-	if err != nil {
-		return "node"
-	}
-
-	var pkg map[string]any
-	if err := json.Unmarshal(data, &pkg); err != nil {
-		return "node"
-	}
-
-	deps := map[string]bool{}
-	for k := range pkg {
-		if depsMap, ok := pkg[k].(map[string]any); ok {
-			for dep := range depsMap {
-				deps[dep] = true
-			}
-		}
-	}
-
-	if deps["@tauri-apps/cli"] || deps["tauri"] {
-		return "tauri"
-	}
-	if deps["electron"] || deps["electron-builder"] {
-		return "electron"
-	}
-	if deps["react-native"] || deps["@react-native/cli"] {
-		return "react-native"
-	}
-	if deps["expo"] {
-		return "expo"
-	}
-	if deps["next"] {
-		return "nextjs"
-	}
-	if deps["vite"] {
-		return "vite"
-	}
-	if deps["@angular/cli"] {
-		return "angular"
-	}
-	if deps["vue"] || deps["@vue/cli"] {
-		return "vue"
-	}
-	if deps["svelte"] {
-		return "svelte"
-	}
-
-	return "node"
-}
-
-func (b *platformBuilder) build(ctx context.Context) (string, error) {
-	platform := strings.ToLower(b.params.Platform)
-	framework := b.getFramework()
-
-	var output strings.Builder
-	output.WriteString(fmt.Sprintf("Building for %s (%s)...\n", platform, framework))
-	output.WriteString(fmt.Sprintf("Project: %s\n", b.projectDir))
-	output.WriteString(fmt.Sprintf("Version: %s\n", b.defaultVersion()))
-	output.WriteString(fmt.Sprintf("Arch: %s\n", b.defaultArch()))
-
-	switch platform {
-	case "android":
-		return b.buildAndroid(ctx, &output)
-	case "windows":
-		return b.buildWindows(ctx, &output)
-	case "linux":
-		return b.buildLinux(ctx, &output)
-	case "macos":
-		return b.buildMacOS(ctx, &output)
-	case "ios":
-		return b.buildIOS(ctx, &output)
-	case "all":
-		return b.buildAll(ctx, &output)
-	default:
-		return "", fmt.Errorf("unknown platform: %s", platform)
-	}
-}
-
-func (b *platformBuilder) getFramework() string {
-	if fw, ok := b.params.Config["framework"].(string); ok {
-		return fw
-	}
-	return b.detectFramework(b.projectDir)
-}
-
-func (b *platformBuilder) defaultVersion() string {
-	if v := b.params.Version; v != "" {
-		return v
-	}
-	return "1.0.0"
-}
-
-func (b *platformBuilder) defaultArch() string {
-	if a := b.params.Arch; a != "" {
-		return a
-	}
-	return "all"
-}
-
-func (b *platformBuilder) buildAndroid(ctx context.Context, output *strings.Builder) (string, error) {
-	framework := b.getFramework()
-
+func frameworkClean(dir, framework string) []string {
 	switch framework {
+	case "go":
+		return []string{"go", "clean", "-cache"}
 	case "flutter":
-		return b.runCmd(ctx, output, "flutter", "build", "apk", "--release")
+		return []string{"flutter", "clean"}
+	case "rust", "tauri":
+		return []string{"cargo", "clean"}
+	case "kotlin":
+		return []string{gradlew(dir), "clean"}
+	case "swift":
+		return []string{"xcodebuild", "clean"}
+	default:
+		return nil
+	}
+}
+
+func frameworkTest(dir, framework string) []string {
+	switch framework {
+	case "go":
+		return []string{"go", "test", "./..."}
+	case "flutter":
+		return []string{"flutter", "test"}
+	case "rust", "tauri":
+		return []string{"cargo", "test"}
+	case "node", "electron", "react-native", "expo":
+		return []string{"npm", "test"}
+	case "kotlin":
+		return []string{gradlew(dir), "test"}
+	case "swift":
+		return []string{"xcodebuild", "test"}
+	default:
+		return nil
+	}
+}
+
+func frameworkLint(dir, framework string) []string {
+	switch framework {
+	case "go":
+		return []string{"go", "vet", "./..."}
+	case "flutter":
+		return []string{"flutter", "analyze"}
+	case "rust", "tauri":
+		return []string{"cargo", "clippy"}
+	case "node", "electron", "react-native", "expo":
+		return []string{"npm", "run", "lint"}
+	case "kotlin":
+		return []string{gradlew(dir), "lint"}
+	case "swift":
+		return []string{"swiftlint"}
+	default:
+		return nil
+	}
+}
+
+// gradlew returns the wrapper when the project ships one, so a Gradle build
+// uses the pinned version instead of whatever is on PATH.
+func gradlew(dir string) string {
+	if fileExists(dir, "gradlew") || fileExists(dir, "gradlew.bat") {
+		return "./gradlew"
+	}
+	return "gradle"
+}
+
+// ---------------------------------------------------------------------------
+// Platform build steps
+// ---------------------------------------------------------------------------
+
+// buildSteps returns the commands that produce a build for one platform.
+func buildSteps(dir, framework, platform, arch, version, extraLdflags string) ([][]string, error) {
+	switch framework {
+	case "go":
+		return goBuildSteps(platform, arch, version, extraLdflags), nil
+
+	case "flutter":
+		switch platform {
+		case "android":
+			return [][]string{{"flutter", "build", "apk", "--release"}}, nil
+		case "ios":
+			return [][]string{{"flutter", "build", "ios", "--release", "--no-codesign"}}, nil
+		case "windows":
+			return [][]string{{"flutter", "build", "windows", "--release"}}, nil
+		case "macos":
+			return [][]string{{"flutter", "build", "macos", "--release"}}, nil
+		case "linux":
+			return [][]string{{"flutter", "build", "linux", "--release"}}, nil
+		}
+
+	case "kotlin":
+		if platform == "android" {
+			return [][]string{{gradlew(dir), "assembleRelease"}}, nil
+		}
+
+	case "swift":
+		switch platform {
+		case "ios":
+			return [][]string{{"xcodebuild", "-scheme", "App", "-configuration", "Release",
+				"-sdk", "iphoneos", "-derivedDataPath", "build"}}, nil
+		case "macos":
+			return [][]string{{"xcodebuild", "-scheme", "App", "-configuration", "Release",
+				"-derivedDataPath", "build"}}, nil
+		}
+
 	case "react-native", "expo":
-		return b.runCmd(ctx, output, "./gradlew", "assembleRelease", "-p", "android")
-	case "kotlin", "android", "java":
-		return b.runCmd(ctx, output, "./gradlew", "assembleRelease")
-	case "go":
-		return b.runCmd(ctx, output, "gogio", "build", "-target", "android", ".")
-	case "rust":
-		return b.runCmd(ctx, output, "cargo", "apk", "build", "--release")
-	default:
-		output.WriteString("Note: Android build requires Flutter, React Native, Kotlin, Go (gogio), or Rust project\n")
-		output.WriteString("Detected framework: " + framework + "\n")
-		return output.String(), nil
-	}
-}
+		if platform == "android" {
+			return [][]string{{gradlew(dir), "assembleRelease", "-p", "android"}}, nil
+		}
+		if platform == "ios" {
+			return [][]string{{"xcodebuild", "-workspace", "ios/App.xcworkspace",
+				"-scheme", "App", "-configuration", "Release",
+				"-sdk", "iphoneos", "-derivedDataPath", "build"}}, nil
+		}
 
-func (b *platformBuilder) buildWindows(ctx context.Context, output *strings.Builder) (string, error) {
-	framework := b.getFramework()
-	arch := b.defaultArch()
+	case "electron", "node", "tauri":
+		return npmBuildSteps(dir, framework, platform)
 
-	switch framework {
-	case "go":
-		ldflags := fmt.Sprintf("-ldflags=-X main.version=%s -H=windowsgui", b.defaultVersion())
-		if arch == "all" || arch == "amd64" {
-			b.runCmd(ctx, output, "go", "build", ldflags, "-o", "dist/windows_amd64/app.exe", ".")
-		}
-		if arch == "all" || arch == "arm64" {
-			b.runCmd(ctx, output, "go", "build", ldflags, "-o", "dist/windows_arm64/app.exe", ".")
-		}
-	case "flutter":
-		b.runCmd(ctx, output, "flutter", "build", "windows", "--release")
-	case "electron", "tauri", "wails":
-		b.runCmd(ctx, output, "npm", "run", "build:win")
 	case "rust":
-		b.runCmd(ctx, output, "cargo", "build", "--release", "--target", "x86_64-pc-windows-msvc")
-		if arch == "all" || arch == "arm64" {
-			b.runCmd(ctx, output, "cargo", "build", "--release", "--target", "aarch64-pc-windows-msvc")
-		}
-	case "node":
-		b.runCmd(ctx, output, "npm", "run", "build")
-		b.runCmd(ctx, output, "pkg", ".", "--targets", "node18-win-x64", "--output", "dist/windows/app.exe")
-	default:
-		output.WriteString("Note: Windows build requires Go, Flutter, Electron, Tauri, Wails, Rust, or Node (with pkg)\n")
+		return rustBuildSteps(platform, arch), nil
 	}
 
-	output.WriteString("\nArtifacts would be in: dist/windows/\n")
-	return output.String(), nil
+	return nil, nil
 }
 
-func (b *platformBuilder) buildLinux(ctx context.Context, output *strings.Builder) (string, error) {
-	framework := b.getFramework()
-	arch := b.defaultArch()
+// goBuildSteps compiles for the requested targets. A cross compile needs no
+// extra toolchain for pure Go, which makes this the most useful case.
+func goBuildSteps(platform, arch, version, extraLdflags string) [][]string {
+	flags := extraLdflags
+	if version != "" {
+		v := "-X main.version=" + version
+		if flags == "" {
+			flags = v
+		} else {
+			flags = flags + " " + v
+		}
+	}
 
-	switch framework {
-	case "go":
-		targets := []string{"linux/amd64", "linux/arm64", "linux/386", "linux/arm"}
-		if arch != "all" {
-			targets = []string{"linux/" + arch}
+	targets := goTargets(platform, arch)
+	steps := make([][]string, 0, len(targets))
+	for _, t := range targets {
+		// The target is "<goos>-<goarch>" so the output path cannot collide
+		// between operating systems.
+		out := "dist/" + t + "/" + goBinaryName(t, platform)
+		step := []string{"go", "build"}
+		if flags != "" {
+			step = append(step, "-ldflags", flags)
 		}
-		for _, t := range targets {
-			b.runCmd(ctx, output, "go", "build", "-o", fmt.Sprintf("dist/%s/app", t), ".")
+		// A GUI binary should not open a console window on Windows.
+		if platform == "windows" {
+			step = append(step, "-H=windowsgui")
 		}
-		output.WriteString("For AppImage: use linuxdeploy or appimage-builder\n")
-		output.WriteString("For deb/rpm: use fpm or nfpm\n")
-	case "flutter":
-		b.runCmd(ctx, output, "flutter", "build", "linux", "--release")
-	case "electron", "tauri", "wails":
-		b.runCmd(ctx, output, "npm", "run", "build:linux")
-	case "rust":
-		targets := []string{"x86_64-unknown-linux-gnu", "aarch64-unknown-linux-gnu"}
-		if arch != "all" {
+		steps = append(steps, append(step, "-o", out, "."))
+	}
+	return steps
+}
+
+// goTargets maps a platform onto the Go toolchain targets that satisfy it.
+// Each entry is "<goos>-<goarch>", which is also the name used for the output
+// directory, so builds for different platforms never overwrite each other.
+func goTargets(platform, arch string) []string {
+	all := map[string][]string{
+		"linux":   {"amd64", "arm64", "386", "arm"},
+		"windows": {"amd64", "arm64"},
+		"darwin":  {"amd64", "arm64"},
+		"android": {"arm64", "amd64"},
+		"ios":     {"arm64"},
+	}
+	list, ok := all[platform]
+	if !ok {
+		return nil
+	}
+	if arch != "" && arch != "all" && arch != "universal" {
+		// iOS has only ever shipped arm64, so anything else is unsatisfiable.
+		if platform == "ios" && arch != "arm64" {
+			return nil
+		}
+		return []string{platform + "-" + arch}
+	}
+
+	targets := make([]string, 0, len(list))
+	for _, a := range list {
+		targets = append(targets, platform+"-"+a)
+	}
+	return targets
+}
+
+func goBinaryName(target, platform string) string {
+	name := "svpc"
+	if platform == "windows" {
+		return name + ".exe"
+	}
+	return name
+}
+
+func rustBuildSteps(platform, arch string) [][]string {
+	var targets []string
+	switch platform {
+	case "linux":
+		if arch == "" || arch == "all" {
+			targets = []string{"x86_64-unknown-linux-gnu", "aarch64-unknown-linux-gnu"}
+		} else {
 			targets = []string{arch + "-unknown-linux-gnu"}
 		}
-		for _, t := range targets {
-			b.runCmd(ctx, output, "cargo", "build", "--release", "--target", t)
+	case "windows":
+		if arch == "" || arch == "all" {
+			targets = []string{"x86_64-pc-windows-msvc", "aarch64-pc-windows-msvc"}
+		} else {
+			targets = []string{arch + "-pc-windows-msvc"}
 		}
-	default:
-		output.WriteString("Note: Linux build requires Go, Flutter, Electron, Tauri, Wails, or Rust\n")
-	}
-
-	output.WriteString("\nArtifacts would be in: dist/linux/\n")
-	return output.String(), nil
-}
-
-func (b *platformBuilder) buildMacOS(ctx context.Context, output *strings.Builder) (string, error) {
-	framework := b.getFramework()
-	arch := b.defaultArch()
-
-	switch framework {
-	case "go":
-		targets := []string{"darwin/amd64", "darwin/arm64"}
-		if arch != "all" && arch != "universal" {
-			targets = []string{"darwin/" + arch}
-		}
-		for _, t := range targets {
-			b.runCmd(ctx, output, "go", "build", "-o", fmt.Sprintf("dist/%s/app", t), ".")
-		}
-		if arch == "universal" || arch == "all" {
-			b.runCmd(ctx, output, "lipo", "-create", "-output", "dist/darwin_universal/app", "dist/darwin_amd64/app", "dist/darwin_arm64/app")
-		}
-		output.WriteString("For .app bundle: use create-dmg or fyne package\n")
-		output.WriteString("For DMG: use create-dmg or hdiutil\n")
-		output.WriteString("For .pkg: use pkgbuild\n")
-	case "flutter":
-		b.runCmd(ctx, output, "flutter", "build", "macos", "--release")
-	case "electron", "tauri", "wails":
-		b.runCmd(ctx, output, "npm", "run", "build:mac")
-	case "swift", "ios":
-		b.runCmd(ctx, output, "xcodebuild", "-scheme", "App", "-configuration", "Release", "-derivedDataPath", "build")
-	case "rust":
-		targets := []string{"x86_64-apple-darwin", "aarch64-apple-darwin"}
-		if arch != "all" && arch != "universal" {
+	case "macos":
+		if arch == "" || arch == "all" || arch == "universal" {
+			targets = []string{"x86_64-apple-darwin", "aarch64-apple-darwin"}
+		} else {
 			targets = []string{arch + "-apple-darwin"}
 		}
-		for _, t := range targets {
-			b.runCmd(ctx, output, "cargo", "build", "--release", "--target", t)
-		}
-		if arch == "universal" || arch == "all" {
-			b.runCmd(ctx, output, "lipo", "-create", "-output", "dist/universal/app", "dist/x86_64/app", "dist/aarch64/app")
-		}
 	default:
-		output.WriteString("Note: macOS build requires Go, Flutter, Electron, Tauri, Wails, Swift, or Rust\n")
+		return nil
 	}
 
-	output.WriteString("\nArtifacts would be in: dist/macos/\n")
-	return output.String(), nil
+	steps := make([][]string, 0, len(targets))
+	for _, t := range targets {
+		steps = append(steps, []string{"cargo", "build", "--release", "--target", t})
+	}
+	return steps
 }
 
-func (b *platformBuilder) buildIOS(ctx context.Context, output *strings.Builder) (string, error) {
-	framework := b.getFramework()
-
-	switch framework {
-	case "flutter":
-		b.runCmd(ctx, output, "flutter", "build", "ios", "--release", "--no-codesign")
-		output.WriteString("For IPA: open Xcode and use Product > Archive > Distribute App\n")
-	case "react-native", "expo":
-		b.runCmd(ctx, output, "xcodebuild", "-workspace", "ios/App.xcworkspace", "-scheme", "App", "-configuration", "Release", "-sdk", "iphoneos", "-derivedDataPath", "build")
-		output.WriteString("For IPA: use xcodebuild -exportArchive or fastlane\n")
-	case "swift", "ios":
-		b.runCmd(ctx, output, "xcodebuild", "-scheme", "App", "-configuration", "Release", "-sdk", "iphoneos", "-derivedDataPath", "build")
-		output.WriteString("For IPA: use xcodebuild -exportArchive\n")
-	case "tauri":
-		b.runCmd(ctx, output, "cargo", "tauri", "build", "--target", "aarch64-apple-ios")
-		output.WriteString("Note: iOS Tauri builds require additional setup\n")
-	default:
-		output.WriteString("Note: iOS build requires Flutter, React Native/Expo, Swift, or Tauri\n")
-		output.WriteString("Detected framework: " + framework + "\n")
+// npmBuildSteps picks the per-platform build script the project defines,
+// falling back to the generic one when it is not present.
+func npmBuildSteps(dir, framework, platform string) ([][]string, error) {
+	if !fileExists(dir, "package.json") {
+		return nil, fmt.Errorf("no package.json in %s", dir)
 	}
 
-	return output.String(), nil
-}
-
-func (b *platformBuilder) buildAll(ctx context.Context, output *strings.Builder) (string, error) {
-	platforms := []string{"android", "windows", "linux", "macos", "ios"}
-	for _, p := range platforms {
-		b.params.Platform = p
-		result, _ := b.build(ctx)
-		output.WriteString(result)
-		output.WriteString("\n---\n")
+	script := "build"
+	candidates := map[string][]string{
+		"windows": {"build:win", "build:windows"},
+		"macos":   {"build:mac", "build:macos"},
+		"linux":   {"build:linux"},
 	}
-	return output.String(), nil
-}
-
-func (b *platformBuilder) clean(ctx context.Context) (string, error) {
-	framework := b.getFramework()
-
-	switch framework {
-	case "flutter":
-		b.runCmd(ctx, nil, "flutter", "clean")
-	case "android", "kotlin":
-		b.runCmd(ctx, nil, "./gradlew", "clean")
-	case "go":
-		b.runCmd(ctx, nil, "go", "clean", "-cache")
-		b.removeDir("dist")
-	case "rust":
-		b.runCmd(ctx, nil, "cargo", "clean")
-	case "node", "electron", "tauri", "react-native", "expo":
-		b.runCmd(ctx, nil, "npm", "run", "clean")
-		b.removeDir("dist")
-		b.removeDir("build")
-	case "swift", "ios":
-		b.removeDir("build")
-		b.removeDir("DerivedData")
-	}
-
-	return "Clean completed", nil
-}
-
-func (b *platformBuilder) test(ctx context.Context) (string, error) {
-	framework := b.getFramework()
-
-	switch framework {
-	case "go":
-		return b.runCmd(ctx, nil, "go", "test", "./...")
-	case "flutter":
-		return b.runCmd(ctx, nil, "flutter", "test")
-	case "rust":
-		return b.runCmd(ctx, nil, "cargo", "test")
-	case "node", "electron", "tauri", "react-native", "expo":
-		return b.runCmd(ctx, nil, "npm", "test")
-	case "android", "kotlin":
-		return b.runCmd(ctx, nil, "./gradlew", "test")
-	case "swift", "ios":
-		return b.runCmd(ctx, nil, "xcodebuild", "test", "-scheme", "App")
-	}
-
-	return "Test command not defined for framework: " + framework, nil
-}
-
-func (b *platformBuilder) lint(ctx context.Context) (string, error) {
-	framework := b.getFramework()
-
-	switch framework {
-	case "go":
-		b.runCmd(ctx, nil, "golangci-lint", "run")
-	case "flutter":
-		b.runCmd(ctx, nil, "flutter", "analyze")
-	case "rust":
-		b.runCmd(ctx, nil, "cargo", "clippy")
-	case "node", "electron", "tauri", "react-native", "expo":
-		b.runCmd(ctx, nil, "npm", "run", "lint")
-	case "android", "kotlin":
-		b.runCmd(ctx, nil, "./gradlew", "lint")
-	case "swift", "ios":
-		b.runCmd(ctx, nil, "swiftlint")
-	}
-
-	return "Lint completed", nil
-}
-
-func (b *platformBuilder) packageArtifacts(ctx context.Context) (string, error) {
-	output := strings.Builder{}
-	output.WriteString("Packaging artifacts...\n")
-
-	// Create platform-specific packages
-	if b.params.OutputPath == "" {
-		b.params.OutputPath = "dist/packages"
-	}
-
-	// This would create actual packages
-	output.WriteString(fmt.Sprintf("Packages would be created in: %s\n", b.params.OutputPath))
-	output.WriteString("- Android: APK/AAB\n")
-	output.WriteString("- Windows: EXE/MSI/Zip\n")
-	output.WriteString("- Linux: AppImage/deb/rpm/tar.gz\n")
-	output.WriteString("- macOS: DMG/pkg/app/Zip\n")
-	output.WriteString("- iOS: IPA\n")
-
-	return output.String(), nil
-}
-
-func (b *platformBuilder) sign(ctx context.Context) (string, error) {
-	if b.params.SignConfig == nil {
-		return "", fmt.Errorf("sign_config required for signing")
-	}
-
-	output := strings.Builder{}
-	output.WriteString("Code signing...\n")
-
-	platform := strings.ToLower(b.params.Platform)
-	switch platform {
-	case "windows":
-		output.WriteString("Windows: Using signtool with certificate\n")
-	case "macos":
-		output.WriteString("macOS: Using codesign with Developer ID\n")
-	case "ios":
-		output.WriteString("iOS: Using codesign with provisioning profile\n")
-	case "android":
-		output.WriteString("Android: Using apksigner with keystore\n")
-	}
-
-	return output.String(), nil
-}
-
-func (b *platformBuilder) notarize(ctx context.Context) (string, error) {
-	if b.params.NotarizeCred == nil {
-		return "", fmt.Errorf("notarize_credentials required for notarization")
-	}
-
-	output := strings.Builder{}
-	output.WriteString("Notarizing with Apple...\n")
-	output.WriteString("Using: xcrun notarytool submit --apple-id $APPLE_ID --password $PASSWORD --team-id $TEAM_ID\n")
-	output.WriteString("Then: xcrun stapler staple\n")
-
-	return output.String(), nil
-}
-
-func (b *platformBuilder) release(ctx context.Context) (string, error) {
-	output := strings.Builder{}
-	output.WriteString("Creating release...\n")
-	output.WriteString(fmt.Sprintf("Version: %s\n", b.defaultVersion()))
-
-	if b.params.Token != "" {
-		output.WriteString("Uploading to GitHub Releases...\n")
-		output.WriteString("Using: gh release create\n")
-	} else {
-		output.WriteString("No token provided, skipping upload\n")
-	}
-
-	return output.String(), nil
-}
-
-func (b *platformBuilder) doctor(ctx context.Context) (string, error) {
-	output := strings.Builder{}
-	output.WriteString("Build Environment Doctor\n")
-	output.WriteString("========================\n\n")
-
-	checks := []struct {
-		name string
-		cmd  []string
-	}{
-		{"Go", []string{"go", "version"}},
-		{"Flutter", []string{"flutter", "--version"}},
-		{"Node.js", []string{"node", "--version"}},
-		{"npm", []string{"npm", "--version"}},
-		{"Rust", []string{"rustc", "--version"}},
-		{"Cargo", []string{"cargo", "--version"}},
-		{"Java", []string{"java", "-version"}},
-		{"Gradle", []string{"gradle", "--version"}},
-		{"Android SDK", []string{"adb", "version"}},
-		{"Xcode", []string{"xcodebuild", "-version"}},
-		{"Swift", []string{"swift", "--version"}},
-		{"Docker", []string{"docker", "--version"}},
-		{"gogio", []string{"gogio", "version"}},
-		{"fyne", []string{"fyne", "version"}},
-		{"wails", []string{"wails", "version"}},
-		{"tauri", []string{"tauri", "--version"}},
-		{"create-dmg", []string{"create-dmg", "--version"}},
-		{"linuxdeploy", []string{"linuxdeploy", "--version"}},
-		{"appimage-builder", []string{"appimage-builder", "--version"}},
-		{"nfpm", []string{"nfpm", "--version"}},
-		{"fastlane", []string{"fastlane", "--version"}},
-		{"gh (GitHub CLI)", []string{"gh", "--version"}},
-		{"signtool", []string{"signtool"}},
-		{"codesign", []string{"codesign", "--help"}},
-		{"apksigner", []string{"apksigner", "--version"}},
-		{"xcrun notarytool", []string{"xcrun", "notarytool", "--help"}},
-	}
-
-	for _, check := range checks {
-		output.WriteString(fmt.Sprintf("%-20s: ", check.name))
-		if len(check.cmd) > 0 {
-			// In real implementation, run the command
-			output.WriteString("✓ Available (stub)\n")
-		} else {
-			output.WriteString("✗ Not checked\n")
+	for _, name := range candidates[platform] {
+		if npmScriptExists(dir, name) {
+			script = name
+			break
 		}
 	}
 
-	return output.String(), nil
-}
-
-func (b *platformBuilder) runCmd(ctx context.Context, output *strings.Builder, cmd string, args ...string) (string, error) {
-	cmdStr := cmd + " " + strings.Join(args, " ")
-	if output != nil {
-		output.WriteString("$ " + cmdStr + "\n")
+	if platform == "android" || platform == "ios" {
+		return nil, fmt.Errorf("%s mobile builds are handled by the native toolchain, not npm", framework)
 	}
-	// In real implementation: exec.CommandContext(ctx, cmd, args...).Run()
-	return "", nil
-}
-
-func (b *platformBuilder) removeDir(path string) {
-	os.RemoveAll(filepath.Join(b.projectDir, path))
-}
-
-// SignTool for code signing
-type SignTool struct{}
-
-func NewSignTool() BaseTool {
-	return &SignTool{}
-}
-
-func (t *SignTool) Info() ToolInfo {
-	return ToolInfo{
-		Name:        SignToolName,
-		Description: "Code signing for Windows (signtool), macOS (codesign), iOS (codesign), Android (apksigner)",
-		Parameters: map[string]any{
-			"type": "object",
-			"properties": map[string]any{
-				"platform": map[string]any{
-					"type":        "string",
-					"enum":        []string{"windows", "macos", "ios", "android"},
-				},
-				"file": map[string]any{
-					"type":        "string",
-					"description": "File to sign",
-				},
-				"certificate": map[string]any{
-					"type":        "string",
-					"description": "Certificate path or thumbprint",
-				},
-				"password": map[string]any{
-					"type":        "string",
-					"description": "Certificate password",
-				},
-				"provisioning_profile": map[string]any{
-					"type":        "string",
-					"description": "iOS provisioning profile path",
-				},
-				"keystore": map[string]any{
-					"type":        "string",
-					"description": "Android keystore path",
-				},
-				"keystore_alias": map[string]any{
-					"type":        "string",
-					"description": "Android keystore alias",
-				},
-				"keystore_password": map[string]any{
-					"type":        "string",
-					"description": "Android keystore password",
-				},
-				"key_password": map[string]any{
-					"type":        "string",
-					"description": "Android key password",
-				},
-			},
-			"required": []string{"platform", "file"},
-		},
-	}
-}
-
-func (t *SignTool) Run(ctx context.Context, call ToolCall) (ToolResponse, error) {
-	var params map[string]any
-	if err := json.Unmarshal([]byte(call.Input), &params); err != nil {
-		return NewTextErrorResponse(fmt.Sprintf("invalid parameters: %v", err)), nil
-	}
-
-	platform, _ := params["platform"].(string)
-	file, _ := params["file"].(string)
-
-	if platform == "" || file == "" {
-		return NewTextErrorResponse("platform and file are required"), nil
-	}
-
-	output := fmt.Sprintf("Signing %s for %s...\n", file, platform)
-	output += "Note: This is a stub. Real implementation would use platform signing tools.\n"
-
-	return NewTextResponse(output), nil
-}
-
-// NotarizeTool for Apple notarization
-type NotarizeTool struct{}
-
-func NewNotarizeTool() BaseTool {
-	return &NotarizeTool{}
-}
-
-func (t *NotarizeTool) Info() ToolInfo {
-	return ToolInfo{
-		Name:        NotarizeToolName,
-		Description: "Apple notarization for macOS and iOS apps",
-		Parameters: map[string]any{
-			"type": "object",
-			"properties": map[string]any{
-				"file": map[string]any{
-					"type":        "string",
-					"description": "App/DMG/Zip to notarize",
-				},
-				"apple_id": map[string]any{
-					"type":        "string",
-					"description": "Apple ID email",
-				},
-				"password": map[string]any{
-					"type":        "string",
-					"description": "App-specific password",
-				},
-				"team_id": map[string]any{
-					"type":        "string",
-					"description": "Apple Team ID",
-				},
-				"bundle_id": map[string]any{
-					"type":        "string",
-					"description": "App bundle identifier",
-				},
-			},
-			"required": []string{"file", "apple_id", "password", "team_id"},
-		},
-	}
-}
-
-func (t *NotarizeTool) Run(ctx context.Context, call ToolCall) (ToolResponse, error) {
-	var params map[string]any
-	if err := json.Unmarshal([]byte(call.Input), &params); err != nil {
-		return NewTextErrorResponse(fmt.Sprintf("invalid parameters: %v", err)), nil
-	}
-
-	file, _ := params["file"].(string)
-	appleID, _ := params["apple_id"].(string)
-	password, _ := params["password"].(string)
-	teamID, _ := params["team_id"].(string)
-
-	if file == "" || appleID == "" || password == "" || teamID == "" {
-		return NewTextErrorResponse("file, apple_id, password, and team_id are required"), nil
-	}
-
-	output := fmt.Sprintf("Notarizing %s with Apple ID %s (Team: %s)...\n", file, appleID, teamID)
-	output += "Commands:\n"
-	output += "1. xcrun notarytool submit " + file + " --apple-id " + appleID + " --password $PASSWORD --team-id " + teamID + " --wait\n"
-	output += "2. xcrun stapler staple " + file + "\n"
-	output += "Note: This is a stub implementation.\n"
-
-	return NewTextResponse(output), nil
-}
-
-// PackageTool for creating distributable packages
-type PackageTool struct{}
-
-func NewPackageTool() BaseTool {
-	return &PackageTool{}
-}
-
-func (t *PackageTool) Info() ToolInfo {
-	return ToolInfo{
-		Name:        PackageToolName,
-		Description: "Create distributable packages: APK/AAB, EXE/MSI, AppImage/deb/rpm, DMG/pkg, IPA",
-		Parameters: map[string]any{
-			"type": "object",
-			"properties": map[string]any{
-				"platform": map[string]any{
-					"type":        "string",
-					"enum":        []string{"android", "windows", "linux", "macos", "ios"},
-				},
-				"format": map[string]any{
-					"type":        "string",
-					"description": "Package format",
-					"enum":        []string{"apk", "aab", "exe", "msi", "zip", "appimage", "deb", "rpm", "tar.gz", "dmg", "pkg", "app", "ipa"},
-				},
-				"input": map[string]any{
-					"type":        "string",
-					"description": "Input binary/app directory",
-				},
-				"output": map[string]any{
-					"type":        "string",
-					"description": "Output package path",
-				},
-				"config": map[string]any{
-					"type":        "object",
-					"description": "Package-specific configuration",
-				},
-			},
-			"required": []string{"platform", "format", "input", "output"},
-		},
-	}
-}
-
-func (t *PackageTool) Run(ctx context.Context, call ToolCall) (ToolResponse, error) {
-	var params map[string]any
-	if err := json.Unmarshal([]byte(call.Input), &params); err != nil {
-		return NewTextErrorResponse(fmt.Sprintf("invalid parameters: %v", err)), nil
-	}
-
-	platform, _ := params["platform"].(string)
-	format, _ := params["format"].(string)
-	input, _ := params["input"].(string)
-	output, _ := params["output"].(string)
-
-	if platform == "" || format == "" || input == "" || output == "" {
-		return NewTextErrorResponse("platform, format, input, and output are required"), nil
-	}
-
-	result := fmt.Sprintf("Packaging %s for %s as %s...\n", input, platform, format)
-	result += "Output: " + output + "\n"
-	result += "Note: This is a stub. Real implementation would use platform packaging tools.\n"
-
-	return NewTextResponse(result), nil
+	return [][]string{{"npm", "run", script}}, nil
 }

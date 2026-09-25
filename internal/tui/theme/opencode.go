@@ -18,20 +18,20 @@ type OpenCodeTheme struct {
 // NewOpenCodeTheme creates a new instance of the OpenCode theme.
 func NewOpenCodeTheme() *OpenCodeTheme {
 	// Dark mode colors
-	darkBackground := "#0A0C11"       // deep canvas
-	darkCurrentLine := "#10131A"      // elevated surface (glass panels)
-	darkSelection := "#181D26"        // hover / dim chrome
-	darkForeground := "#E7EAF2"       // primary text
-	darkComment := "#7C8497"          // muted text
-	darkPrimary := "#4CC2FF"          // primary accent (cyan)
-	darkSecondary := "#9B8CFF"        // secondary accent (violet)
-	darkAccent := "#2DD4BF"           // tertiary accent (teal)
-	darkRed := "#F87171"              // Error red
-	darkOrange := "#FBBF24"           // Warning amber
-	darkGreen := "#34D399"            // Success green
-	darkCyan := "#38BDF8"             // Info cyan
-	darkYellow := "#E6C885"           // Emphasized text (warm sand)
-	darkBorder := "#2A3140"           // hairline border
+	darkBackground := "#0A0C11"  // deep canvas
+	darkCurrentLine := "#10131A" // elevated surface (glass panels)
+	darkSelection := "#181D26"   // hover / dim chrome
+	darkForeground := "#E7EAF2"  // primary text
+	darkComment := "#7C8497"     // muted text
+	darkPrimary := "#4CC2FF"     // primary accent (cyan)
+	darkSecondary := "#9B8CFF"   // secondary accent (violet)
+	darkAccent := "#2DD4BF"      // tertiary accent (teal)
+	darkRed := "#F87171"         // Error red
+	darkOrange := "#FBBF24"      // Warning amber
+	darkGreen := "#34D399"       // Success green
+	darkCyan := "#38BDF8"        // Info cyan
+	darkYellow := "#E6C885"      // Emphasized text (warm sand)
+	darkBorder := "#2A3140"      // hairline border
 
 	// Light mode colors
 	lightBackground := "#F7F8FA"
