@@ -36,10 +36,10 @@
 
   /* Spacing scale */
   --s1: 4px;  --s2: 8px;  --s3: 12px;
-  --s4: 16px; --s5: 24px; --s6: 32px;
+  --s4: 16px; --s5: 24px;
 
   /* Radius */
-  --r-sm: 6px;  --r-md: 10px;  --r-lg: 14px;  --r-xl: 20px;
+  --r-sm: 6px;  --r-md: 10px;
 
   /* Type */
   --sans: "Inter", "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif;
@@ -58,6 +58,22 @@
 
   /* Added and removed lines in a diff. */
   --diff-add:       #7EE787;
+
+  /* Tints. A colour is only used at full strength or as one of these, so the
+     translucency lives here rather than being invented at each call site. One
+     token per distinct value, named for the colour rather than for the place it
+     happens to be used, so a focus halo and an avatar can share one without
+     either name becoming a lie. */
+  --primary-wash:   rgba(76, 194, 255, .05);
+  --secondary-wash: rgba(155, 140, 255, .05);
+  --primary-tint:   rgba(76, 194, 255, .14);
+  --secondary-tint: rgba(155, 140, 255, .16);
+  --secondary-edge: rgba(155, 140, 255, .35);
+  --error-tint:     rgba(248, 113, 113, .16);
+  --error-soft:     rgba(248, 113, 113, .3);
+  --warning-tint:   rgba(251, 191, 36, .08);
+  --warning-edge:   rgba(251, 191, 36, .32);
+  --scrim:          rgba(0, 0, 0, .18);
 
   /* Motion */
   --t-fast: 120ms cubic-bezier(.4,0,.2,1);
@@ -98,8 +114,8 @@ body::before {
   inset: 0;
   pointer-events: none;
   background:
-    radial-gradient(520px 320px at 12% 0%,   rgba(76,194,255,.055), transparent 70%),
-    radial-gradient(460px 300px at 100% 100%, rgba(155,140,255,.05), transparent 70%);
+    radial-gradient(520px 320px at 12% 0%,   var(--primary-wash), transparent 70%),
+    radial-gradient(460px 300px at 100% 100%, var(--secondary-wash), transparent 70%);
   z-index: 0;
 }
 
@@ -206,7 +222,7 @@ body::before {
 .field input::placeholder { color: var(--text-muted); }
 .field input:focus, .field select:focus {
   border-color: var(--primary);
-  box-shadow: 0 0 0 3px rgba(76,194,255,.14);
+  box-shadow: 0 0 0 3px var(--primary-tint);
 }
 .field select { cursor: pointer; }
 
@@ -334,10 +350,10 @@ kbd {
 }
 .dot.busy {
   background: var(--primary);
-  box-shadow: 0 0 0 4px rgba(76,194,255,.15);
+  box-shadow: 0 0 0 4px var(--primary-tint);
   animation: pulse 1.4s ease-in-out infinite;
 }
-.dot.error { background: var(--error); box-shadow: 0 0 0 4px rgba(248,113,113,.15); }
+.dot.error { background: var(--error); box-shadow: 0 0 0 4px var(--error-tint); }
 .dot.ready { background: var(--success); }
 
 @keyframes pulse { 0%,100% { opacity: 1 } 50% { opacity: .45 } }
@@ -422,9 +438,9 @@ kbd {
   font-weight: 700;
   user-select: none;
 }
-.msg.user   .avatar { background: rgba(155,140,255,.16); color: var(--secondary); }
-.msg.bot    .avatar { background: rgba(76,194,255,.14);  color: var(--primary); }
-.msg.error  .avatar { background: rgba(248,113,113,.16); color: var(--error); }
+.msg.user   .avatar { background: var(--secondary-tint); color: var(--secondary); }
+.msg.bot    .avatar { background: var(--primary-tint);  color: var(--primary); }
+.msg.error  .avatar { background: var(--error-tint); color: var(--error); }
 
 .msg.user .bubble {
   background: var(--surface);
@@ -459,7 +475,7 @@ kbd {
 .bubble li { margin-bottom: 4px; }
 .bubble li::marker { color: var(--primary); }
 
-.bubble a { color: var(--secondary); text-decoration: none; border-bottom: 1px solid rgba(155,140,255,.35); }
+.bubble a { color: var(--secondary); text-decoration: none; border-bottom: 1px solid var(--secondary-edge); }
 .bubble a:hover { border-bottom-color: var(--secondary); }
 
 .bubble code {
@@ -599,7 +615,7 @@ kbd {
 }
 .composer-box:focus-within {
   border-color: var(--primary);
-  box-shadow: 0 0 0 3px rgba(76,194,255,.12);
+  box-shadow: 0 0 0 3px var(--primary-tint);
 }
 
 .prompt-mark {
@@ -631,8 +647,8 @@ kbd {
   display: flex;
   gap: var(--s3);
   padding: var(--s3) var(--s4);
-  background: rgba(251, 191, 36, .08);
-  border: 1px solid rgba(251, 191, 36, .3);
+  background: var(--warning-tint);
+  border: 1px solid var(--warning-edge);
   border-radius: var(--r-md);
 }
 .setup.hidden { display: none; }
@@ -670,9 +686,9 @@ kbd {
 }
 
 .perm-box {
-  border: 1px solid rgba(251, 191, 36, .32);
+  border: 1px solid var(--warning-edge);
   border-radius: var(--r-md);
-  background: linear-gradient(180deg, rgba(251,191,36,.05), rgba(251,191,36,.02));
+  background: linear-gradient(180deg, var(--warning-tint), var(--warning-tint));
   overflow: hidden;
 }
 
@@ -741,7 +757,7 @@ kbd {
   gap: var(--s2);
   padding: var(--s3) var(--s4);
   border-top: 1px solid var(--line-dim);
-  background: rgba(0, 0, 0, .18);
+  background: var(--scrim);
 }
 
 .perm-actions .btn { font-size: 12.5px; padding: 7px 14px; }
@@ -759,9 +775,8 @@ kbd {
 .perm.answered .perm-mark  { color: var(--text-muted); }
 .perm.answered .perm-title { color: var(--text-muted); }
 .perm.answered .perm-actions { display: none; }
-.perm.denied .perm-box { border-color: rgba(248, 113, 113, .3); }
+.perm.denied .perm-box { border-color: var(--error-soft); }
 .perm.denied .perm-title { color: var(--error); }
-
 
 /* ── Scrollbars ──────────────────────────────────────────── */
 

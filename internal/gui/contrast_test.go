@@ -205,20 +205,28 @@ func parseHex(hex string) (float64, float64, float64) {
 // TestColoursComeFromTokens keeps the palette honest.
 //
 // Every colour has to come from a token, so a component cannot quietly grow its
-// own shade. The token blocks are the only places a hex is allowed.
+// own shade. The rule is deliberately blunt rather than clever: any hex or rgb()
+// literal outside a custom-property declaration is an offender.
+//
+// A precise grammar over colour-bearing properties looked like the better tool
+// and was worse. It anchored to the start of a line, and every rule here is
+// written on one line, so it matched nothing and would have passed forever.
 func TestColoursComeFromTokens(t *testing.T) {
 	css := asset(t, "app.css")
 
-	// A hex in a colour or background declaration, outside a --token line.
-	offender := regexp.MustCompile(`(?m)^\s*(?:color|background(?:-color)?|border(?:-\w+)?)\s*:[^;]*#[0-9A-Fa-f]{3,8}`)
+	// Both notations count: a hex is a flat colour, and an rgb() with an alpha
+	// is how a tint of one is written.
+	literal := regexp.MustCompile(`#[0-9A-Fa-f]{3,8}\b|rgba?\s*\(`)
 
 	var offenders []string
-	for _, line := range strings.Split(css, "\n") {
+	for number, line := range strings.Split(css, "\n") {
+		// A custom-property declaration is where a literal belongs.
 		if strings.HasPrefix(strings.TrimSpace(line), "--") {
-			continue // a token declaration, which is where a hex belongs
+			continue
 		}
-		if offender.MatchString(line) {
-			offenders = append(offenders, strings.TrimSpace(line))
+		if literal.MatchString(line) {
+			offenders = append(offenders,
+				fmt.Sprintf("line %d: %s", number+1, strings.TrimSpace(line)))
 		}
 	}
 
@@ -228,30 +236,138 @@ func TestColoursComeFromTokens(t *testing.T) {
 	}
 }
 
+// inlineColours lists the colour literals written outside a token declaration.
+func inlineColours(css string) []string {
+	literal := regexp.MustCompile(`#[0-9A-Fa-f]{3,8}\b|rgba?\s*\(`)
+
+	var found []string
+	for _, line := range strings.Split(css, "\n") {
+		if strings.HasPrefix(strings.TrimSpace(line), "--") {
+			continue
+		}
+		if literal.MatchString(line) {
+			found = append(found, strings.TrimSpace(line))
+		}
+	}
+	return found
+}
+
+// TestPaletteAssertionsHaveTeeth guards the checks above against going vacuous.
+//
+// A test that cannot fail is worse than no test, and the inline-colour check
+// already spent a commit silently unable to see anything. Each mutation below is
+// a change the stylesheet ought to be rejected for, so the check has to notice.
+func TestPaletteAssertionsHaveTeeth(t *testing.T) {
+	original := asset(t, "app.css")
+
+	if base := inlineColours(original); len(base) != 0 {
+		t.Fatalf("the stylesheet already has %d inline colour(s):\n  %s",
+			len(base), strings.Join(base, "\n  "))
+	}
+
+	mutations := []struct {
+		name   string
+		mutate func(string) string
+	}{
+		{"a one-line rule writes its own shade",
+			func(s string) string { return s + "\n.bubble { color: #ff00ff; }" }},
+		{"a multi-line rule writes its own shade",
+			func(s string) string { return s + "\n.bubble {\n  color: #ff00ff;\n}\n" }},
+		{"a background is written inline",
+			func(s string) string { return s + "\n.hero { background: #123456; }" }},
+		{"a border is written inline",
+			func(s string) string { return s + "\n.tool { border: 1px solid #abcdef; }" }},
+		{"a tint is written as rgba",
+			func(s string) string { return s + "\n.msg .avatar { background: rgba(76,194,255,.14); }" }},
+	}
+
+	for _, m := range mutations {
+		t.Run(m.name, func(t *testing.T) {
+			if got := inlineColours(m.mutate(original)); len(got) == 0 {
+				t.Error("the inline-colour check did not notice")
+			}
+		})
+	}
+}
+
 // TestPaletteHasNoUnusedTokens catches a token left behind once its last use
 // went away, which is how a stylesheet quietly accumulates dead values.
+//
+// Every token is checked, not only the colours: a scale entry nothing reaches is
+// as dead as a colour, and three of them were.
 func TestPaletteHasNoUnusedTokens(t *testing.T) {
 	css := asset(t, "app.css")
 
-	// Only the colour and type tokens, because the spacing and radius scales
-	// are also reached through the shorthand rules.
-	interesting := regexp.MustCompile(
-		`--((?:[\w-]*(?:text|line|border|ink|accent|primary|success|error|warning|diff|mono|sans|hover|canvas|surface|code)[\w-]*))`)
-
 	declared := map[string]bool{}
-	for _, m := range interesting.FindAllStringSubmatch(css, -1) {
+	for _, m := range regexp.MustCompile(`(--[\w-]+)\s*:`).FindAllStringSubmatch(css, -1) {
 		declared[m[1]] = true
 	}
 
 	unused := []string{}
 	for name := range declared {
-		if !regexp.MustCompile(`var\(--` + regexp.QuoteMeta(name) + `[,)]`).MatchString(css) {
-			unused = append(unused, "--"+name)
+		if !regexp.MustCompile(`var\(` + regexp.QuoteMeta(name) + `[,)]`).MatchString(css) {
+			unused = append(unused, name)
 		}
 	}
 	sort.Strings(unused)
 
 	if len(unused) > 0 {
 		t.Errorf("declared but never used: %s", strings.Join(unused, ", "))
+	}
+}
+
+// TestEveryVariableIsDefined catches a var() with no matching declaration.
+//
+// The failure is silent: CSS resolves an unknown custom property to nothing, so
+// a colour or a spacing step simply disappears rather than erroring. The
+// high-contrast block is excluded because it inherits from :root.
+func TestEveryVariableIsDefined(t *testing.T) {
+	css := asset(t, "app.css")
+
+	declared := map[string]bool{}
+	for _, m := range regexp.MustCompile(`(--[\w-]+)\s*:`).FindAllStringSubmatch(css, -1) {
+		declared[m[1]] = true
+	}
+
+	used := map[string]bool{}
+	for _, m := range regexp.MustCompile(`var\((--[\w-]+)`).FindAllStringSubmatch(css, -1) {
+		used[m[1]] = true
+	}
+
+	var undefined []string
+	for name := range used {
+		if !declared[name] {
+			undefined = append(undefined, name)
+		}
+	}
+	sort.Strings(undefined)
+
+	if len(undefined) > 0 {
+		t.Errorf("used but never declared: %s", strings.Join(undefined, ", "))
+	}
+}
+
+// TestNoTokenIsDefinedInTermsOfItself catches a bulk edit that rewrites a token
+// declaration along with its uses, leaving --x: var(--x). CSS resolves that to
+// nothing, so the colour silently disappears instead of erroring.
+//
+// The comparison is done in Go rather than with a backreference, which Go's
+// regexp engine does not have.
+func TestNoTokenIsDefinedInTermsOfItself(t *testing.T) {
+	css := asset(t, "app.css")
+
+	declaration := regexp.MustCompile(`(--[\w-]+)\s*:\s*var\((--[\w-]+)\)`)
+
+	var offenders []string
+	for _, m := range declaration.FindAllStringSubmatch(css, -1) {
+		if m[1] == m[2] {
+			offenders = append(offenders, m[1])
+		}
+	}
+	sort.Strings(offenders)
+
+	if len(offenders) > 0 {
+		t.Errorf("these resolve to themselves and will render as nothing: %s",
+			strings.Join(offenders, ", "))
 	}
 }
