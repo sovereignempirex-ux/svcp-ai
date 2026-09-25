@@ -88,9 +88,9 @@ func (t *BuildTool) Run(ctx context.Context, call ToolCall) (ToolResponse, error
 	// A project_path pointing somewhere else is worth its own confirmation.
 	sessionID, messageID := sessionContext(ctx)
 	if p.ProjectPath != "" {
-		if err := t.runner.ask(ctx, sessionID, messageID, BuildToolName,
+		if err := t.runner.askIn(ctx, sessionID, messageID, BuildToolName,
 			fmt.Sprintf("build %s in %s", p.Platform, p.ProjectPath), p.Action,
-			map[string]any{"platform": p.Platform, "path": p.ProjectPath}); err != nil {
+			dir, map[string]any{"platform": p.Platform, "path": p.ProjectPath}); err != nil {
 			return NewTextErrorResponse(err.Error()), nil
 		}
 	}

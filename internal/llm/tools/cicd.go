@@ -205,8 +205,8 @@ func (t *GitHubWorkflowTool) Run(ctx context.Context, call ToolCall) (ToolRespon
 	rel := ".github/" + target
 
 	sessionID, messageID := sessionContext(ctx)
-	if err := t.runner.ask(ctx, sessionID, messageID, GitHubWorkflowToolName,
-		"write "+rel, "write", map[string]any{"file": rel}); err != nil {
+	if err := t.runner.askIn(ctx, sessionID, messageID, GitHubWorkflowToolName,
+		"write "+rel, "write", dir, map[string]any{"file": rel}); err != nil {
 		return NewTextErrorResponse(err.Error()), nil
 	}
 

@@ -7,9 +7,12 @@ import (
 	"net/http"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/svpc-ai/svpc/internal/app"
 	"github.com/svpc-ai/svpc/internal/llm/tools"
 	"github.com/svpc-ai/svpc/internal/message"
+	"github.com/svpc-ai/svpc/internal/permission"
 )
 
 func TestToolSummaryPicksTheUsefulField(t *testing.T) {
@@ -265,5 +268,191 @@ func TestEmbeddedIconIsAValidICO(t *testing.T) {
 	}
 	if count := int(Icon[4]) | int(Icon[5])<<8; count == 0 {
 		t.Error("the icon declares no images")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Approvals
+// ---------------------------------------------------------------------------
+
+func TestPermissionRejectsBadRequests(t *testing.T) {
+	base := startServer(t)
+
+	cases := []struct {
+		name   string
+		method string
+		body   string
+		want   int
+	}{
+		{"wrong method", http.MethodGet, "", http.StatusMethodNotAllowed},
+		{"invalid json", http.MethodPost, `{invalid`, http.StatusBadRequest},
+		{"missing id", http.MethodPost, `{"action":"allow"}`, http.StatusBadRequest},
+		// The core is not running in setup mode, so nothing can be approved.
+		{"no core", http.MethodPost, `{"id":"x","action":"allow"}`, http.StatusServiceUnavailable},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			status, _ := get(t, tc.method, base+"api/permission", tc.body)
+			if status != tc.want {
+				t.Errorf("status = %d, want %d", status, tc.want)
+			}
+		})
+	}
+}
+
+func TestToPermissionRequest(t *testing.T) {
+	t.Run("carries the fields the window needs", func(t *testing.T) {
+		got, ok := toPermissionRequest(permission.PermissionRequest{
+			ID: "id-1", ToolName: "bash", Action: "execute",
+			Description: "go test ./...", Path: "C:/repo",
+		})
+		if !ok {
+			t.Fatal("a request with an id should be forwarded")
+		}
+		if got.ID != "id-1" || got.ToolName != "bash" || got.Action != "execute" {
+			t.Errorf("fields were not carried over: %+v", got)
+		}
+		if got.Detail != "" {
+			t.Errorf("no tool was given, so there is no detail: %q", got.Detail)
+		}
+	})
+
+	t.Run("pulls the diff out of the file tools", func(t *testing.T) {
+		got, _ := toPermissionRequest(permission.PermissionRequest{
+			ID: "id-2", Params: tools.WritePermissionsParams{
+				FilePath: "a.go", Diff: "--- a\n+++ b\n",
+			},
+		})
+		if got.Diff != "--- a\n+++ b\n" {
+			t.Errorf("diff = %q", got.Diff)
+		}
+	})
+
+	t.Run("a request without an id is dropped", func(t *testing.T) {
+		if _, ok := toPermissionRequest(permission.PermissionRequest{ToolName: "bash"}); ok {
+			t.Error("a request with no id cannot be answered, so it should be dropped")
+		}
+	})
+}
+
+func TestPendingApprovalRoundTrip(t *testing.T) {
+	b := newBridge(context.Background(), nil, nil, errFake{})
+	b.rememberPending(permission.PermissionRequest{
+		ID: "abc", SessionID: "s1", ToolName: "bash", Action: "execute", Path: "C:/repo",
+	})
+
+	got, ok := b.takePending("abc")
+	if !ok {
+		t.Fatal("the stored request should be found")
+	}
+	// The permission service matches on these fields when granting for a
+	// session, so losing any of them would silently change behaviour.
+	if got.ID != "abc" || got.SessionID != "s1" || got.ToolName != "bash" ||
+		got.Action != "execute" || got.Path != "C:/repo" {
+		t.Errorf("the original request was not preserved: %+v", got)
+	}
+
+	// It is consumed, so a second answer is rejected rather than double-granted.
+	if _, ok := b.takePending("abc"); ok {
+		t.Error("a request should only be answerable once")
+	}
+}
+
+func TestOnlyOneTurnAtATime(t *testing.T) {
+	b := newBridge(context.Background(), nil, nil, errFake{})
+
+	if !b.beginTurn() {
+		t.Fatal("the first turn should be admitted")
+	}
+	// A second concurrent turn would leave approval requests with nowhere to go.
+	if b.beginTurn() {
+		t.Error("a second concurrent turn should be refused")
+	}
+	b.endTurn()
+	if !b.beginTurn() {
+		t.Error("the slot should be free once the turn finishes")
+	}
+}
+
+func TestPermissionEventIsForwardedToTheWindow(t *testing.T) {
+	// The bridge reads from b.perm, so a request published to the broker has to
+	// arrive there. This is the path that used to be missing entirely, which
+	// left the agent blocked forever.
+	perms := permission.NewPermissionService()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	b := newBridge(ctx, nil, nil, nil)
+	b.app = &app.App{Permissions: perms}
+	b.watchPermissions()
+
+	// Give the goroutine a moment to subscribe before publishing.
+	time.Sleep(50 * time.Millisecond)
+
+	released := make(chan bool, 1)
+	go func() {
+		released <- perms.Request(permission.CreatePermissionRequest{
+			SessionID: "s1", ToolName: "bash", Description: "go build ./...",
+		})
+	}()
+
+	var forwarded PermissionRequest
+	select {
+	case forwarded = <-b.perm:
+		if forwarded.ToolName != "bash" {
+			t.Errorf("tool name = %q", forwarded.ToolName)
+		}
+		if forwarded.Description != "go build ./..." {
+			t.Errorf("description = %q", forwarded.Description)
+		}
+		if forwarded.ID == "" {
+			t.Fatal("the request needs an id so the window can answer it")
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("no approval reached the window")
+	}
+
+	// The window answers with the id it was shown, exactly as the HTTP handler
+	// resolves it back to the original request.
+	pending, ok := b.takePending(forwarded.ID)
+	if !ok {
+		t.Fatal("the request the window was shown must be answerable")
+	}
+	perms.Grant(pending)
+
+	select {
+	case granted := <-released:
+		if !granted {
+			t.Error("the tool should have been allowed")
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("the tool is still blocked after the window answered")
+	}
+}
+
+func TestPermissionRequestTimesOutRatherThanBlocking(t *testing.T) {
+	// requestTimeout is minutes long, so the wait is exercised through the
+	// shutdown path instead: an abandoned request must not wedge the tool.
+	perms := permission.NewPermissionService()
+
+	released := make(chan bool, 1)
+	go func() {
+		released <- perms.Request(permission.CreatePermissionRequest{
+			SessionID: "s1", ToolName: "bash",
+		})
+	}()
+
+	// Nobody has answered; shutting down must release the wait.
+	time.Sleep(50 * time.Millisecond)
+	perms.Shutdown()
+
+	select {
+	case granted := <-released:
+		if granted {
+			t.Error("an unanswered request must not be granted")
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("the tool stayed blocked after shutdown")
 	}
 }

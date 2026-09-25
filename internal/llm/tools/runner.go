@@ -258,6 +258,12 @@ func firstNonEmpty(values ...string) string {
 // ask requests permission for a command before it runs. The session and message
 // IDs come from the context, exactly like the file tools do.
 func (r *runner) ask(ctx context.Context, sessionID, messageID, toolName, description, action string, params map[string]any) error {
+	return r.askIn(ctx, sessionID, messageID, toolName, description, action, r.workingDir, params)
+}
+
+// askIn is ask with an explicit scope, for the tools that act on a project
+// other than the working directory.
+func (r *runner) askIn(ctx context.Context, sessionID, messageID, toolName, description, action, path string, params map[string]any) error {
 	if r.permissions == nil {
 		return nil
 	}
@@ -267,6 +273,7 @@ func (r *runner) ask(ctx context.Context, sessionID, messageID, toolName, descri
 		Description: description,
 		Action:      action,
 		Params:      params,
+		Path:        path,
 	}) {
 		return nil
 	}

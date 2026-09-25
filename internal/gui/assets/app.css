@@ -38,6 +38,10 @@
   /* Radius */
   --r-sm: 6px;  --r-md: 10px;  --r-lg: 14px;  --r-xl: 20px;
 
+  /* Type */
+  --sans: "Inter", "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif;
+  --mono: "Cascadia Mono", "Consolas", ui-monospace, monospace;
+
   /* Motion */
   --t-fast: 120ms cubic-bezier(.4,0,.2,1);
   --t-base: 200ms cubic-bezier(.4,0,.2,1);
@@ -445,7 +449,7 @@ kbd {
   background: var(--code-bg);
   border: 1px solid var(--line-dim);
   border-radius: 4px;
-  font-family: "Cascadia Mono", "Consolas", ui-monospace, monospace;
+  font-family: var(--mono);
   font-size: 12.5px;
   color: #7EE787;
 }
@@ -522,7 +526,7 @@ kbd {
   flex: 1;
   min-width: 0;
   color: var(--text-muted);
-  font-family: "Cascadia Mono", "Consolas", ui-monospace, monospace;
+  font-family: var(--mono);
   font-size: 11.5px;
   white-space: nowrap;
   overflow: hidden;
@@ -634,6 +638,112 @@ kbd {
   color: var(--text-muted);
   line-height: 1.55;
 }
+
+/* ── Permission card ────────────────────────────────────────
+   The agent stops and waits for an answer before it touches the
+   machine. The card states exactly what is about to happen and
+   offers the same three choices the terminal dialog does. */
+
+.perm {
+  max-width: 860px;
+  margin: 0 auto var(--s3);
+  padding-left: 42px;
+  animation: rise var(--t-fast) both;
+}
+
+.perm-box {
+  border: 1px solid rgba(251, 191, 36, .32);
+  border-radius: var(--r-md);
+  background: linear-gradient(180deg, rgba(251,191,36,.05), rgba(251,191,36,.02));
+  overflow: hidden;
+}
+
+.perm-head {
+  display: flex;
+  align-items: center;
+  gap: var(--s2);
+  padding: var(--s3) var(--s4) var(--s2);
+}
+
+.perm-mark {
+  flex: none;
+  color: var(--warning);
+  font-size: 14px;
+  line-height: 1;
+}
+
+.perm-title {
+  font-size: 12.5px;
+  color: var(--warning);
+  letter-spacing: .04em;
+  text-transform: uppercase;
+}
+
+.perm-tool {
+  margin-left: auto;
+  font-size: 11.5px;
+  color: var(--text-muted);
+  font-family: var(--mono);
+}
+
+.perm-desc {
+  margin: 0;
+  padding: 0 var(--s4) var(--s3);
+  font-size: 13px;
+  color: var(--text);
+  line-height: 1.55;
+  overflow-wrap: anywhere;
+}
+
+.perm-diff {
+  margin: 0 var(--s4) var(--s3);
+  padding: var(--s3);
+  max-height: 240px;
+  overflow: auto;
+  background: var(--code-bg);
+  border: 1px solid var(--line-dim);
+  border-radius: var(--r-sm);
+  font-family: var(--mono);
+  font-size: 12px;
+  line-height: 1.5;
+  white-space: pre;
+  color: var(--text-muted);
+}
+
+.perm-path {
+  padding: 0 var(--s4) var(--s3);
+  font-family: var(--mono);
+  font-size: 11.5px;
+  color: var(--text-muted);
+  overflow-wrap: anywhere;
+}
+
+.perm-actions {
+  display: flex;
+  gap: var(--s2);
+  padding: var(--s3) var(--s4);
+  border-top: 1px solid var(--line-dim);
+  background: rgba(0, 0, 0, .18);
+}
+
+.perm-actions .btn { font-size: 12.5px; padding: 7px 14px; }
+
+.btn-allow       { background: var(--success); color: #06210F; border-color: transparent; font-weight: 600; }
+.btn-allow:hover:not(:disabled) { background: #4FE3AC; }
+.btn-always      { background: transparent; color: var(--text); border-color: var(--line); }
+.btn-always:hover { color: var(--text); border-color: var(--success); }
+.btn-deny        { background: transparent; color: var(--text-muted); border-color: var(--line); }
+.btn-deny:hover:not(:disabled) { color: var(--error); border-color: var(--error); }
+
+/* Once answered the card stays as a record of what was approved. */
+.perm.answered .perm-box { border-color: var(--line-dim); }
+.perm.answered .perm-head  { opacity: .6; }
+.perm.answered .perm-mark  { color: var(--text-muted); }
+.perm.answered .perm-title { color: var(--text-muted); }
+.perm.answered .perm-actions { display: none; }
+.perm.denied .perm-box { border-color: rgba(248, 113, 113, .3); }
+.perm.denied .perm-title { color: var(--error); }
+
 
 /* ── Scrollbars ──────────────────────────────────────────── */
 

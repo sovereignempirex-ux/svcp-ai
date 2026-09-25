@@ -162,6 +162,10 @@ func (a *App) RunNonInteractive(ctx context.Context, prompt string, outputFormat
 
 // Shutdown performs a clean shutdown of the application
 func (app *App) Shutdown() {
+	// Release anything blocked on an approval before the rest of the teardown:
+	// a tool waiting for a person cannot be cancelled any other way.
+	app.Permissions.Shutdown()
+
 	// Cancel all watcher goroutines
 	app.cancelFuncsMutex.Lock()
 	for _, cancel := range app.watcherCancelFuncs {

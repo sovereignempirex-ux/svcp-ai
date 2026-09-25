@@ -21,6 +21,7 @@ import (
 	"github.com/svpc-ai/svpc/internal/llm/tools"
 	"github.com/svpc-ai/svpc/internal/logging"
 	"github.com/svpc-ai/svpc/internal/message"
+	"github.com/svpc-ai/svpc/internal/permission"
 )
 
 //go:embed all:assets
@@ -54,6 +55,33 @@ type ToolCall struct {
 	State string `json:"state"` // running | done | error
 	Error string `json:"error,omitempty"`
 }
+
+// PermissionRequest is an approval the agent is waiting on, as the UI sees it.
+type PermissionRequest struct {
+	ID          string `json:"id"`
+	ToolName    string `json:"tool_name"`
+	Action      string `json:"action"`
+	Description string `json:"description"`
+	Path        string `json:"path,omitempty"`
+	// Detail carries the tool's own summary — a command, a file path — so the
+	// card can say what is about to happen rather than only naming a tool.
+	Detail string `json:"detail,omitempty"`
+	// Diff is set for the file tools, matching what the terminal dialog shows.
+	Diff string `json:"diff,omitempty"`
+}
+
+// PermissionResponse is the user's answer to a PermissionRequest.
+type PermissionResponse struct {
+	ID     string `json:"id"`
+	Action string `json:"action"` // allow | allow_session | deny
+}
+
+// The three answers a user can give, mirroring the terminal dialog.
+const (
+	PermissionAllow           = "allow"
+	PermissionAllowForSession = "allow_session"
+	PermissionDeny            = "deny"
+)
 
 // Config is the provider selection the UI sends with each request. Empty
 // values fall back to the CLI configuration, so a user only sets what differs.
@@ -104,14 +132,111 @@ type bridge struct {
 
 	mu       sync.Mutex
 	sessions map[string]string // UI session id -> persisted session id
+
+	// perm carries approval requests from the agent to the window. Without a
+	// consumer the permission service blocks forever, so a chat turn that needs
+	// approval would hang: the window has to be able to answer.
+	perm chan PermissionRequest
+
+	// active is set while a turn is streaming. Only one turn runs at a time, so
+	// every approval request has exactly one stream to travel to.
+	active bool
+
+	// awaiting holds the approval requests the window has been shown and not yet
+	// answered, keyed by id.
+	awaiting map[string]pendingPermission
+
+	// watching guards the one-time subscription to the permission broker.
+	watching bool
+}
+
+// pendingPermission keeps the request exactly as the permission service built
+// it, so an answer can be handed straight back without reconstructing fields.
+type pendingPermission struct {
+	original permission.PermissionRequest
 }
 
 func newBridge(ctx context.Context, conn *sql.DB, a *app.App, setupErr error) *bridge {
-	b := &bridge{ctx: ctx, db: conn, app: a, coreReady: a != nil, sessions: map[string]string{}}
+	b := &bridge{
+		ctx:       ctx,
+		db:        conn,
+		app:       a,
+		coreReady: a != nil,
+		sessions:  map[string]string{},
+		awaiting:  map[string]pendingPermission{},
+		perm:      make(chan PermissionRequest, 8),
+	}
 	if setupErr != nil {
 		b.setupErr = setupErr.Error()
 	}
 	return b
+}
+
+// watchPermissions forwards every approval the agent asks for to the window.
+//
+// The terminal dialog subscribes to the same broker; without an equivalent
+// subscriber here the permission service would block on an unanswered request
+// and the turn would never finish.
+//
+// It is safe to call on every turn: the subscription is made once, and only
+// after the core exists.
+func (b *bridge) watchPermissions() {
+	b.mu.Lock()
+	core := b.app
+	already := b.watching
+	b.watching = true
+	b.mu.Unlock()
+
+	if core == nil || already {
+		return
+	}
+
+	ctx := b.ctx
+	if ctx == nil {
+		ctx = context.Background()
+	}
+
+	go func() {
+		for ev := range core.Permissions.Subscribe(ctx) {
+			b.rememberPending(ev.Payload)
+
+			req, ok := toPermissionRequest(ev.Payload)
+			if !ok {
+				continue
+			}
+			select {
+			case b.perm <- req:
+			case <-ctx.Done():
+				return
+			}
+		}
+	}()
+}
+
+// toPermissionRequest converts a broker payload into the wire form, pulling out
+// the diff the file tools attach so the window can show the change.
+func toPermissionRequest(p permission.PermissionRequest) (PermissionRequest, bool) {
+	out := PermissionRequest{
+		ID:          p.ID,
+		ToolName:    p.ToolName,
+		Action:      p.Action,
+		Description: p.Description,
+		Path:        p.Path,
+	}
+	if p.ID == "" {
+		return out, false
+	}
+
+	// The file tools send a typed params struct with a rendered diff; anything
+	// else contributes no diff. A type switch keeps those types in their own
+	// package instead of forcing a shared interface on them.
+	switch params := p.Params.(type) {
+	case tools.WritePermissionsParams:
+		out.Diff = params.Diff
+	case tools.EditPermissionsParams:
+		out.Diff = params.Diff
+	}
+	return out, true
 }
 
 // ready reports whether a chat turn can be served.
@@ -238,6 +363,19 @@ func (b *bridge) handleChat(w http.ResponseWriter, r *http.Request) {
 
 	writeEvent(w, map[string]any{"session_id": sessionID})
 
+	// Only one turn streams at a time: every approval request the agent makes
+	// has to reach the single open stream, so a second turn would either steal
+	// them or deadlock the first.
+	if !b.beginTurn() {
+		writeEvent(w, map[string]any{"error": "a turn is already running"})
+		return
+	}
+	defer b.endTurn()
+
+	// The core may have just booted, in which case there was no subscriber when
+	// the bridge was created.
+	b.watchPermissions()
+
 	done, err := b.app.CoderAgent.Run(ctx, sessionID, req.Content)
 	if err != nil {
 		writeEvent(w, map[string]any{"error": err.Error()})
@@ -246,6 +384,91 @@ func (b *bridge) handleChat(w http.ResponseWriter, r *http.Request) {
 
 	b.pump(ctx, w, flusher, done, sessionID)
 	writeEvent(w, map[string]any{"done": true})
+}
+
+// beginTurn claims the single turn slot, reporting false when it is taken.
+func (b *bridge) beginTurn() bool {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if b.active {
+		return false
+	}
+	b.active = true
+	return true
+}
+
+func (b *bridge) endTurn() {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.active = false
+}
+
+// handlePermission records the user's answer to an approval request.
+func (b *bridge) handlePermission(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	var req PermissionResponse
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "invalid request", http.StatusBadRequest)
+		return
+	}
+	if strings.TrimSpace(req.ID) == "" {
+		http.Error(w, "id is required", http.StatusBadRequest)
+		return
+	}
+	if b.app == nil {
+		http.Error(w, "the agent core is not running", http.StatusServiceUnavailable)
+		return
+	}
+
+	// The window only knows the fields it was shown, so the original payload is
+	// kept alongside them: the permission service matches on session, tool,
+	// action and path, and GrantPersistant needs the exact request back.
+	pending, ok := b.takePending(req.ID)
+	if !ok {
+		http.Error(w, "unknown or already answered request", http.StatusNotFound)
+		return
+	}
+
+	switch strings.ToLower(strings.TrimSpace(req.Action)) {
+	case PermissionAllow:
+		b.app.Permissions.Grant(pending)
+	case PermissionAllowForSession:
+		b.app.Permissions.GrantPersistant(pending)
+	case PermissionDeny:
+		b.app.Permissions.Deny(pending)
+	default:
+		http.Error(w, "action must be allow, allow_session or deny", http.StatusBadRequest)
+		return
+	}
+
+	_ = json.NewEncoder(w).Encode(map[string]any{"ok": true})
+}
+
+// takePending removes and returns the stored request for an approval.
+func (b *bridge) takePending(id string) (permission.PermissionRequest, bool) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+
+	stored, ok := b.awaiting[id]
+	if !ok {
+		return permission.PermissionRequest{}, false
+	}
+	delete(b.awaiting, id)
+	return stored.original, true
+}
+
+// rememberPending keeps the request so a later response can be matched to it.
+func (b *bridge) rememberPending(p permission.PermissionRequest) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if b.awaiting == nil {
+		b.awaiting = map[string]pendingPermission{}
+	}
+	b.awaiting[p.ID] = pendingPermission{original: p}
 }
 
 // bootCore brings up the application core after the user has configured a
@@ -290,6 +513,13 @@ func (b *bridge) pump(ctx context.Context, w http.ResponseWriter, flusher http.F
 		select {
 		case <-ctx.Done():
 			return
+
+		case req := <-b.perm:
+			// The agent is blocked until the window answers, so this has to be
+			// surfaced immediately and flushed before anything else can be
+			// written to the same response.
+			writeEvent(w, map[string]any{"permission": req})
+			flush(w, flusher)
 
 		case ev, ok := <-done:
 			if !ok {
@@ -524,6 +754,7 @@ func serve(ctx context.Context, conn *sql.DB, a *app.App, setupErr error) (strin
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/chat", b.handleChat)
 	mux.HandleFunc("/api/models", b.handleModels)
+	mux.HandleFunc("/api/permission", b.handlePermission)
 	mux.HandleFunc("/api/sessions", b.handleSessions)
 
 	sub, err := fs.Sub(assets, "assets")
