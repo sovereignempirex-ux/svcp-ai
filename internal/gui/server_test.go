@@ -313,8 +313,12 @@ func TestToPermissionRequest(t *testing.T) {
 		if got.ID != "id-1" || got.ToolName != "bash" || got.Action != "execute" {
 			t.Errorf("fields were not carried over: %+v", got)
 		}
-		if got.Detail != "" {
-			t.Errorf("no tool was given, so there is no detail: %q", got.Detail)
+		// The description is what the card shows, so it has to survive intact.
+		if got.Description != "go test ./..." {
+			t.Errorf("description = %q", got.Description)
+		}
+		if got.Diff != "" {
+			t.Errorf("no file tool was involved, so there is no diff: %q", got.Diff)
 		}
 	})
 

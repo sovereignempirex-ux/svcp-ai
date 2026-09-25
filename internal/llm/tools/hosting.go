@@ -1,11 +1,16 @@
 package tools
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"strings"
+	"time"
+
+	"github.com/svpc-ai/svpc/internal/permission"
 )
 
 const (
@@ -44,13 +49,98 @@ type HostingParams struct {
 }
 
 type HostingTool struct {
-	httpClient *http.Client
+	httpClient  *http.Client
+	permissions permission.Service
+	runner      *runner
 }
 
-func NewHostingTool() BaseTool {
+func NewHostingTool(permissions permission.Service) BaseTool {
 	return &HostingTool{
-		httpClient: &http.Client{},
+		// A provider that stalls must not hold the turn open indefinitely.
+		httpClient:  &http.Client{Timeout: 30 * time.Second},
+		permissions: permissions,
+		runner:      newRunner(permissions),
 	}
+}
+
+// mutatingHostingAction reports whether an action changes state. Reads are
+// listed explicitly so a newly added action is denied by default rather than
+// silently allowed.
+func mutatingHostingAction(action string) bool {
+	switch action {
+	case "create_pr", "create_issue", "merge_pr", "close_issue", "add_labels", "assign_issue":
+		return true
+	default:
+		return false
+	}
+}
+
+// describeHostingAction states the change in the user's terms, including the
+// title or body, because "create_issue" alone does not say what was written.
+func describeHostingAction(provider HostingProvider, action string, p HostingParams) string {
+	repo := p.Owner + "/" + p.Repo
+	switch action {
+	case "create_pr":
+		return fmt.Sprintf("Open pull request on %s %s: %s", provider, repo, quoteOr(p.Title, "no title"))
+	case "create_issue":
+		return fmt.Sprintf("Open issue on %s %s: %s", provider, repo, quoteOr(p.Title, "no title"))
+	case "merge_pr":
+		return fmt.Sprintf("Merge pull request #%d on %s %s", p.Number, provider, repo)
+	case "close_issue":
+		return fmt.Sprintf("Close issue #%d on %s %s", p.Number, provider, repo)
+	case "add_labels":
+		return fmt.Sprintf("Add labels %s to #%d on %s %s",
+			strings.Join(p.Labels, ", "), p.Number, provider, repo)
+	case "assign_issue":
+		return fmt.Sprintf("Assign #%d on %s %s to %s",
+			p.Number, provider, repo, strings.Join(p.Assignees, ", "))
+	default:
+		return action + " on " + string(provider) + " " + repo
+	}
+}
+
+func quoteOr(value, fallback string) string {
+	if strings.TrimSpace(value) == "" {
+		return fallback
+	}
+	return "\"" + truncateRunes(value, 120) + "\""
+}
+
+func truncateRunes(s string, n int) string {
+	r := []rune(s)
+	if len(r) <= n {
+		return s
+	}
+	if n <= 1 {
+		return string(r[:n])
+	}
+	return string(r[:n-1]) + "…"
+}
+
+// redactHosting keeps the token out of the prompt and the transcript.
+func redactHosting(p HostingParams) map[string]any {
+	out := map[string]any{
+		"provider": p.Provider,
+		"action":   p.Action,
+		"owner":    p.Owner,
+		"repo":     p.Repo,
+	}
+	if p.Title != "" {
+		out["title"] = p.Title
+	}
+	if p.Number != 0 {
+		out["number"] = p.Number
+	}
+	if len(p.Labels) > 0 {
+		out["labels"] = p.Labels
+	}
+	if len(p.Assignees) > 0 {
+		out["assignees"] = p.Assignees
+	}
+	if p.Token != "" {
+		out["token"] = "***"
+	}
+	return out
 }
 
 func (t *HostingTool) Info() ToolInfo {
@@ -177,6 +267,17 @@ func (t *HostingTool) Run(ctx context.Context, call ToolCall) (ToolResponse, err
 		provider:   provider,
 	}
 
+	// Reads are harmless, but anything that changes state on a real repository
+	// asks first, the same as a local file write does.
+	if mutatingHostingAction(action) {
+		sessionID, _ := sessionContext(ctx)
+		if err := t.runner.ask(ctx, sessionID, "", HostingToolName,
+			describeHostingAction(provider, action, params), action,
+			redactHosting(params)); err != nil {
+			return NewTextErrorResponse(err.Error()), nil
+		}
+	}
+
 	var result string
 	var err error
 
@@ -220,21 +321,29 @@ type hostingClient struct {
 }
 
 func (c *hostingClient) doRequest(ctx context.Context, method, path string, body any) ([]byte, error) {
-	var bodyReader *strings.Reader
+	// A nil io.Reader is what "no body" means here. A nil *strings.Reader is not:
+	// http.NewRequest type-switches on the concrete type, calls Len on it and
+	// panics, which is how every read through this client used to fail.
+	var bodyReader io.Reader
 	if body != nil {
-		jsonBody, _ := json.Marshal(body)
-		bodyReader = strings.NewReader(string(jsonBody))
+		jsonBody, err := json.Marshal(body)
+		if err != nil {
+			return nil, fmt.Errorf("encoding request: %w", err)
+		}
+		bodyReader = bytes.NewReader(jsonBody)
 	}
 
-	url := c.baseURL + path
-	req, err := http.NewRequestWithContext(ctx, method, url, bodyReader)
+	req, err := http.NewRequestWithContext(ctx, method, c.baseURL+path, bodyReader)
 	if err != nil {
 		return nil, err
 	}
 
 	req.Header.Set("Authorization", "Bearer "+c.token)
 	req.Header.Set("Accept", "application/json")
-	req.Header.Set("Content-Type", "application/json")
+	// A GET with no body must not claim to send one.
+	if body != nil {
+		req.Header.Set("Content-Type", "application/json")
+	}
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
@@ -242,15 +351,15 @@ func (c *hostingClient) doRequest(ctx context.Context, method, path string, body
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode >= 400 {
-		var errResp map[string]any
-		json.NewDecoder(resp.Body).Decode(&errResp)
-		return nil, fmt.Errorf("API error %d: %v", resp.StatusCode, errResp)
+	raw, err := io.ReadAll(io.LimitReader(resp.Body, 8*1024*1024))
+	if err != nil {
+		return nil, fmt.Errorf("reading response: %w", err)
 	}
 
-	var result map[string]any
-	json.NewDecoder(resp.Body).Decode(&result)
-	return json.MarshalIndent(result, "", "  ")
+	if resp.StatusCode >= 400 {
+		return nil, apiError(resp.Status, raw)
+	}
+	return raw, nil
 }
 
 func (c *hostingClient) createPR(ctx context.Context, params HostingParams) (string, error) {

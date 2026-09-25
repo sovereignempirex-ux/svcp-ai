@@ -63,9 +63,6 @@ type PermissionRequest struct {
 	Action      string `json:"action"`
 	Description string `json:"description"`
 	Path        string `json:"path,omitempty"`
-	// Detail carries the tool's own summary — a command, a file path — so the
-	// card can say what is about to happen rather than only naming a tool.
-	Detail string `json:"detail,omitempty"`
 	// Diff is set for the file tools, matching what the terminal dialog shows.
 	Diff string `json:"diff,omitempty"`
 }

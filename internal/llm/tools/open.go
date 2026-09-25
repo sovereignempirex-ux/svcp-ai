@@ -5,8 +5,10 @@ import (
 	"encoding/json"
 	"fmt"
 	"runtime"
+	"strings"
 
 	"github.com/skratchdot/open-golang/open"
+	"github.com/svpc-ai/svpc/internal/permission"
 )
 
 const OpenToolName = "open"
@@ -16,10 +18,32 @@ type OpenParams struct {
 	Path string `json:"path,omitempty"`
 }
 
-type OpenTool struct{}
+type OpenTool struct {
+	runner *runner
+}
 
-func NewOpenTool() BaseTool {
-	return &OpenTool{}
+func NewOpenTool(permissions permission.Service) BaseTool {
+	return &OpenTool{runner: newRunner(permissions)}
+}
+
+// needsApproval reports whether a target is worth asking about.
+//
+// A plain web URL is the common, harmless case and would only add friction. A
+// path is not: the default handler for it is an executable, so a model that has
+// been talked into "opening" something can otherwise run a program. So does any
+// URL scheme other than http and https, because those hand the target to a
+// registered handler just as a path does.
+func needsApproval(params OpenParams) bool {
+	if params.URL == "" {
+		return true
+	}
+	scheme := strings.ToLower(strings.TrimSpace(params.URL))
+	switch {
+	case strings.HasPrefix(scheme, "http://"), strings.HasPrefix(scheme, "https://"):
+		return false
+	default:
+		return true
+	}
 }
 
 func (t *OpenTool) Info() ToolInfo {
@@ -59,6 +83,20 @@ func (t *OpenTool) Run(ctx context.Context, call ToolCall) (ToolResponse, error)
 		target = params.URL
 	} else {
 		target = params.Path
+	}
+
+	if needsApproval(params) {
+		sessionID, _ := sessionContext(ctx)
+		summary := map[string]any{"target": target}
+		if params.Path != "" {
+			summary["kind"] = "application or file"
+		} else {
+			summary["kind"] = "url"
+		}
+		if err := t.runner.ask(ctx, sessionID, "", OpenToolName,
+			"open "+target, "open", summary); err != nil {
+			return NewTextErrorResponse(err.Error()), nil
+		}
 	}
 
 	// Use skratchdot/open-golang for cross-platform support
