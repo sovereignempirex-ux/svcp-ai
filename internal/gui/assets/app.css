@@ -27,9 +27,12 @@
   --warning:       #FBBF24;
   --success:       #34D399;
 
-  /* Lines */
-  --line:          #2A3140;
-  --line-dim:      #181D26;
+  /* Lines. --line and --line-dim separate content and need no contrast of their
+     own; --control-border is the boundary someone has to be able to see in
+     order to find the control, so it clears 3:1 on every surface it sits on. */
+  --line:           #2A3140;
+  --line-dim:       #181D26;
+  --control-border: #626978;
 
   /* Spacing scale */
   --s1: 4px;  --s2: 8px;  --s3: 12px;
@@ -42,6 +45,20 @@
   --sans: "Inter", "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif;
   --mono: "Cascadia Mono", "Consolas", ui-monospace, monospace;
 
+  /* Ink on an accent fill. The accents are light, so text on them is near black
+     to keep the button legible; one token so no button invents its own. */
+  --on-accent:      #04121C;
+  --on-success:     #06210F;
+
+  /* Interaction states. Derived by hand once, here, instead of at each call
+     site, so a hover is the same shift everywhere. */
+  --primary-hover:  #6BCBFF;
+  --success-hover:  #4FE3AC;
+  --line-hover:     #3A4356;
+
+  /* Added and removed lines in a diff. */
+  --diff-add:       #7EE787;
+
   /* Motion */
   --t-fast: 120ms cubic-bezier(.4,0,.2,1);
   --t-base: 200ms cubic-bezier(.4,0,.2,1);
@@ -51,11 +68,12 @@
 
 /* High-contrast variant, toggled from the top bar. */
 body.contrast {
-  --text:        #FFFFFF;
-  --text-muted:  #A6AEC0;
-  --line:        #3D4759;
-  --surface:     #0D1017;
-  --surface-hi:  #1C2230;
+  --text:           #FFFFFF;
+  --text-muted:     #A6AEC0;
+  --line:           #3D4759;
+  --surface:        #0D1017;
+  --surface-hi:     #1C2230;
+  --control-border: #666D7C;
 }
 
 * { box-sizing: border-box; }
@@ -68,7 +86,7 @@ html, body {
 body {
   background: var(--canvas);
   color: var(--text);
-  font: 14px/1.6 "Segoe UI Variable", "Segoe UI", system-ui, -apple-system, sans-serif;
+  font: 14px/1.6 var(--sans);
   -webkit-font-smoothing: antialiased;
   overflow: hidden;
 }
@@ -119,7 +137,7 @@ body::before {
 .brand-mark svg { width: 100%; height: 100%; display: block; }
 
 .brand-text { display: flex; flex-direction: column; min-width: 0; }
-.brand-text strong { font-size: 15px; letter-spacing: .2px; }
+  .brand-text strong { font-size: 15px; letter-spacing: .2px; color: var(--text-emph); }
 .brand-text span {
   font-size: 11.5px;
   color: var(--text-muted);
@@ -178,14 +196,14 @@ body::before {
   padding: 8px 10px;
   background: var(--canvas);
   color: var(--text);
-  border: 1px solid var(--line);
+  border: 1px solid var(--control-border);
   border-radius: var(--r-sm);
   font: inherit;
   font-size: 13px;
   outline: none;
   transition: border-color var(--t-fast), box-shadow var(--t-fast);
 }
-.field input::placeholder { color: #4A5265; }
+.field input::placeholder { color: var(--text-muted); }
 .field input:focus, .field select:focus {
   border-color: var(--primary);
   box-shadow: 0 0 0 3px rgba(76,194,255,.14);
@@ -209,7 +227,7 @@ body::before {
   padding: 0 var(--s1);
   font-size: 11.5px;
   line-height: 1.5;
-  color: #5B6478;
+  color: var(--text-muted);
 }
 
 .sidebar-foot {
@@ -219,7 +237,7 @@ body::before {
   padding: var(--s3) var(--s4);
   border-top: 1px solid var(--line-dim);
   font-size: 11px;
-  color: #5B6478;
+  color: var(--text-muted);
 }
 .sidebar-foot > span { white-space: nowrap; }
 kbd {
@@ -257,14 +275,14 @@ kbd {
 
 .btn-primary {
   background: var(--primary);
-  color: #04121C;
+  color: var(--on-accent);
 }
-.btn-primary:hover:not(:disabled) { background: #6BCBFF; }
+.btn-primary:hover:not(:disabled) { background: var(--primary-hover); }
 
 .btn-ghost {
   background: transparent;
   color: var(--text-muted);
-  border-color: var(--line);
+  border-color: var(--control-border);
 }
 .btn-ghost:hover { color: var(--text); border-color: var(--primary); }
 
@@ -274,7 +292,7 @@ kbd {
   place-items: center;
   background: transparent;
   color: var(--text-muted);
-  border: 1px solid var(--line);
+  border: 1px solid var(--control-border);
   border-radius: var(--r-sm);
   font-size: 14px;
   cursor: pointer;
@@ -370,7 +388,7 @@ kbd {
   padding: 7px 12px;
   background: var(--surface);
   color: var(--text-muted);
-  border: 1px solid var(--line);
+  border: 1px solid var(--control-border);
   border-radius: 999px;
   font: inherit;
   font-size: 12.5px;
@@ -451,7 +469,7 @@ kbd {
   border-radius: 4px;
   font-family: var(--mono);
   font-size: 12.5px;
-  color: #7EE787;
+  color: var(--diff-add);
 }
 
 .bubble pre {
@@ -575,7 +593,7 @@ kbd {
   gap: var(--s2);
   padding: 10px var(--s3);
   background: var(--canvas);
-  border: 1px solid var(--line);
+  border: 1px solid var(--control-border);
   border-radius: var(--r-md);
   transition: border-color var(--t-fast), box-shadow var(--t-fast);
 }
@@ -603,7 +621,7 @@ kbd {
   font: inherit;
   line-height: 1.55;
 }
-#input::placeholder { color: #4A5265; }
+#input::placeholder { color: var(--text-muted); }
 
 /* ── Setup banner ────────────────────────────────────────── */
 
@@ -728,11 +746,11 @@ kbd {
 
 .perm-actions .btn { font-size: 12.5px; padding: 7px 14px; }
 
-.btn-allow       { background: var(--success); color: #06210F; border-color: transparent; font-weight: 600; }
-.btn-allow:hover:not(:disabled) { background: #4FE3AC; }
-.btn-always      { background: transparent; color: var(--text); border-color: var(--line); }
+.btn-allow       { background: var(--success); color: var(--on-success); border-color: transparent; font-weight: 600; }
+.btn-allow:hover:not(:disabled) { background: var(--success-hover); }
+.btn-always      { background: transparent; color: var(--text); border-color: var(--control-border); }
 .btn-always:hover { color: var(--text); border-color: var(--success); }
-.btn-deny        { background: transparent; color: var(--text-muted); border-color: var(--line); }
+.btn-deny        { background: transparent; color: var(--text-muted); border-color: var(--control-border); }
 .btn-deny:hover:not(:disabled) { color: var(--error); border-color: var(--error); }
 
 /* Once answered the card stays as a record of what was approved. */
@@ -755,6 +773,6 @@ kbd {
   background-clip: content-box;
 }
 .stream::-webkit-scrollbar-thumb:hover, .sidebar-scroll::-webkit-scrollbar-thumb:hover {
-  background: #3A4356;
+  background: var(--line-hover);
   background-clip: content-box;
 }
