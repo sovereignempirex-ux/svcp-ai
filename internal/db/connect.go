@@ -16,7 +16,15 @@ import (
 )
 
 func Connect() (*sql.DB, error) {
-	dataDir := config.Get().Data.Directory
+	// Get returns nil until the configuration has been loaded, and opening the
+	// store before that used to take the process down here rather than report it.
+	// A caller that has not configured anything is a caller with nowhere to put
+	// the store, which is an error to return and not a crash.
+	cfg := config.Get()
+	if cfg == nil {
+		return nil, fmt.Errorf("configuration is not loaded")
+	}
+	dataDir := cfg.Data.Directory
 	if dataDir == "" {
 		return nil, fmt.Errorf("data.dir is not set")
 	}

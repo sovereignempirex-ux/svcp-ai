@@ -22,6 +22,7 @@ import (
 	"github.com/svpc-ai/svpc/internal/logging"
 	"github.com/svpc-ai/svpc/internal/message"
 	"github.com/svpc-ai/svpc/internal/permission"
+	"github.com/svpc-ai/svpc/internal/version"
 )
 
 //go:embed all:assets
@@ -307,6 +308,29 @@ func truncate(s string, n int) string {
 
 // handleChat runs one turn through the real agent and streams the transcript:
 // tool activity first, then the answer as it is produced.
+// handleVersion reports what this build is, so a client can find out that it does
+// not speak this version of the API before it sends a request whose reply shape it
+// would misread.
+//
+// The name is checked first, because that is the failure worth reporting: an SDK
+// built against v2 arriving at a v1 bridge gets a clear answer, rather than a
+// missing field it decides is an empty model.
+func (b *bridge) handleVersion(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet && r.Method != http.MethodHead {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	_ = json.NewEncoder(w).Encode(map[string]any{
+		"version": version.Version,
+		"api":     apiVersion,
+	})
+}
+
+// apiVersion is the contract docs/api.md describes. It changes only when a
+// second version is published beside this one, never in place, so a client that
+// checks it on connect is not told a shape it does not know.
+const apiVersion = "v1"
+
 func (b *bridge) handleChat(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
@@ -806,10 +830,23 @@ func serveWith(ctx context.Context, conn *sql.DB, a *app.App, setupErr error,
 	b := newBridge(ctx, conn, a, setupErr)
 
 	mux := http.NewServeMux()
-	mux.HandleFunc("/api/chat", b.handleChat)
-	mux.HandleFunc("/api/models", b.handleModels)
-	mux.HandleFunc("/api/permission", b.handlePermission)
-	mux.HandleFunc("/api/sessions", b.handleSessions)
+
+	// The versioned paths are the contract, and docs/api.md is written against
+	// them. Each one is bound to the same handler as the unversioned path beside
+	// it rather than forwarding, so there is no second code path to keep in step
+	// and a handler cannot behave differently depending on which name it was
+	// reached by.
+	//
+	// The unversioned paths stay because the shipped window and the shipped
+	// Android app call them, and those are already on people's phones.
+	for _, prefix := range []string{"/api/v1", "/api"} {
+		mux.HandleFunc(prefix+"/chat", b.handleChat)
+		mux.HandleFunc(prefix+"/models", b.handleModels)
+		mux.HandleFunc(prefix+"/permission", b.handlePermission)
+		mux.HandleFunc(prefix+"/sessions", b.handleSessions)
+	}
+	mux.HandleFunc("/api/version", b.handleVersion)
+	mux.HandleFunc("/api/v1/version", b.handleVersion)
 
 	sub, err := fs.Sub(assets, "assets")
 	if err != nil {

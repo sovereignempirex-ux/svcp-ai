@@ -1,0 +1,145 @@
+name: test
+
+# The agent is Go, but it is meant to be driven from other languages, so those
+# clients are tested here too. Each is tested against a real HTTP server speaking
+# the protocol the bridge does, so a change to the bridge that the SDKs have not
+# caught up with fails this rather than a user's program.
+#
+# The Go tests need no credential: an unconfigured agent is the state every first
+# run is in, and the checks are written to be meaningful in that state.
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+  pull_request:
+
+concurrency: ${{ github.workflow }}-${{ github.ref }}
+
+permissions:
+  contents: read
+
+jobs:
+  go:
+    name: go
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ">=1.23.2"
+          cache: true
+          cache-dependency-path: go.sum
+
+      - run: go mod download
+
+      - name: formatting
+        run: |
+          unformatted=$(gofmt -l internal cmd pkg)
+          if [ -n "$unformatted" ]; then
+            echo "these files are not gofmt clean:"
+            echo "$unformatted"
+            exit 1
+          fi
+
+      - run: go vet ./...
+
+      - name: tests
+        # The window is Windows-only, so its package builds everywhere but its
+        # tests need a host that will execute them; they are run on Windows below.
+        run: go test $(go list ./... | grep -v '/internal/gui$')
+
+      - name: the library builds for every platform it claims
+        run: |
+          for target in linux/amd64 linux/arm64 darwin/amd64 darwin/arm64 windows/amd64; do
+            os="${target%/*}"
+            arch="${target#*/}"
+            echo "  $target"
+            CGO_ENABLED=0 GOOS="$os" GOARCH="$arch" go build ./pkg/... || exit 1
+          done
+
+  window:
+    name: the window
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ">=1.23.2"
+          cache: true
+          cache-dependency-path: go.sum
+
+      - run: go mod download
+      - run: go build ./...
+      - run: go test ./internal/gui/
+
+  javascript:
+    name: sdk/js
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: sdk/js
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      # No install step: the client has no dependencies, which is the point of it.
+      # A client for a tool that runs commands should not drag a tree into whatever
+      # program uses it.
+      - run: node --test
+      - run: node -e "import('./client.js').then(m => { for (const n of ['Client','ApiError','ALLOW','DENY','readEvents','decode']) { if (!(n in m)) { console.error('missing export: ' + n); process.exit(1) } } console.log('exports ok') })"
+
+  python:
+    name: sdk/python
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: sdk/python
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      # Nothing installed, for the same reason as the JavaScript job.
+      - run: python -m unittest discover -s . -v
+
+      - name: the package installs
+        run: |
+          python -m pip install --quiet build
+          python -m build --wheel
+          python -m pip install --quiet dist/*.whl
+          python -c "import svpc; assert svpc.API_VERSION == 'v1'; print('package ok')"
+
+  release-files:
+    name: release files agree
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ">=1.23.2"
+          cache: true
+          cache-dependency-path: go.sum
+
+      # The archives the release publishes and the names the install script asks
+      # for have to be the same names, and nothing in the toolchain compares them.
+      - run: go test ./internal/release/
+
+      - name: the installer is a valid shell script
+        run: bash -n install
+
+      - name: the installer has unix line endings
+        # A carriage return after the shebang makes the file unrunnable on every
+        # platform it is meant for, and nothing on Windows notices.
+        run: |
+          if grep -q $'\r' install; then
+            echo "install has carriage returns; it will not run on Linux or macOS"
+            exit 1
+          fi

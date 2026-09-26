@@ -30,39 +30,107 @@ SVPC AI is a Go-based CLI application that brings AI assistance to your terminal
 
 ## Installation
 
-### Using the Install Script
+### Windows
+
+Download `SVPC.AI.exe` from the [latest release](https://github.com/sovereignempirex-ux/svcp-ai/releases/latest) and run it.
+
+### Linux and macOS
 
 ```bash
-# Install the latest version
-curl -fsSL https://raw.githubusercontent.com/svpc-ai/svpc/refs/heads/main/install | bash
+# Install the latest release
+curl -fsSL https://raw.githubusercontent.com/sovereignempirex-ux/svcp-ai/refs/heads/main/install | bash
 
 # Install a specific version
-curl -fsSL https://raw.githubusercontent.com/svpc-ai/svpc/refs/heads/main/install | VERSION=0.1.0 bash
+curl -fsSL https://raw.githubusercontent.com/sovereignempirex-ux/svcp-ai/refs/heads/main/install | VERSION=1.0.0 bash
 ```
 
-### Using Homebrew (macOS and Linux)
+The script installs to `~/.svpc/bin` and needs no root. It prints the one line to add
+to your shell, or adds it for you.
+
+<details>
+<summary>Building from the release archives by hand</summary>
 
 ```bash
-brew install svpc-ai/tap/svpc
+VERSION=1.0.0
+ARCH=arm64        # or x86_64
+OS=linux          # or mac
+
+curl -fLO "https://github.com/sovereignempirex-ux/svcp-ai/releases/download/v${VERSION}/svpc-${OS}-${ARCH}.tar.gz"
+tar -xzf "svpc-${OS}-${ARCH}.tar.gz"
+install svpc ~/.svpc/bin/
 ```
 
-### Using AUR (Arch Linux)
+Each archive holds one binary, `LICENSE` and `README.md`, and the archive names are
+the ones the script asks for. `checksums.txt` in the same release lists a SHA-256 for
+every asset; `sha256sum -c checksums.txt` verifies them.
 
-```bash
-# Using yay
-yay -S svpc-ai-bin
+</details>
 
-# Using paru
-paru -S svpc-ai-bin
-```
+<details>
+<summary>Package managers</summary>
+
+There is no Homebrew tap or AUR package for this project. The release archives and
+the install script above are the supported routes; if you maintain a tap and would
+like it listed here, open an issue.
+
+</details>
 
 ### Using Go
 
 ```bash
-go install github.com/svpc-ai/svpc@latest
+go install github.com/sovereignempirex-ux/svcp/cmd@latest
 ```
 
-## Configuration
+### Android
+
+`svpc-ai.apk` from the same release is a client: it drives the agent running on your
+own machine over the network, rather than running a model on the phone. Start the
+agent with `svpc --serve 0.0.0.0` and enter the address and token it prints.
+
+### Using SVPC AI as a library
+
+The agent is a Go package, and it is a client over an HTTP contract. Whichever you
+want, the working directory, the provider and the sessions are the same files the
+command line tool uses.
+
+| | |
+|---|---|
+| [`pkg/svpc`](pkg/svpc) | Go. Embed the agent directly. `go get github.com/sovereignempirex-ux/svcp/pkg/svpc` |
+| [`sdk/python`](sdk/python) | Python, standard library only. `pip install svpc-ai` |
+| [`sdk/js`](sdk/js) | JavaScript, no dependencies. Works in a browser, Deno, Bun and Node |
+| [`docs/api.md`](docs/api.md) | The HTTP contract, for a language nobody has written a client for yet |
+
+```go
+agent, _ := svpc.New(ctx, svpc.Options{WorkingDir: "."})
+defer agent.Close()
+
+answer, session, _ := agent.Answer(ctx, "", "what does this repository do?")
+fmt.Println(answer)
+```
+
+```python
+from svpc import Client
+
+with Client("192.168.1.20", 8080, token) as agent:
+    agent.connect()                                   # check the API version
+    print(agent.ask_once("what changed here?")["text"])
+```
+
+```js
+import { Client } from '@svpc-ai/client';
+
+const agent = new Client({ host: '192.168.1.20', port: 8080, token });
+await agent.version();
+const { text } = await agent.askOnce('what changed here?');
+```
+
+The Go library runs the agent in your process. The two SDKs run it somewhere else
+and speak to it, which is what makes a phone, a browser or a service possible: start
+the agent with `svpc --serve 0.0.0.0` and give the client the address and token it
+prints. A turn asks before it runs a command, and the client answers that from its
+own code — a browser can put up a dialog, and a program that nobody is watching
+denies by default.
+
 
 SVPC AI looks for configuration in the following locations:
 
@@ -136,7 +204,8 @@ This is useful if you want to use a different shell than your default system she
   "providers": {
     "openai": {
       "apiKey": "your-api-key",
-      "disabled": false
+      "disabled": false,
+      "baseUrl": "https://your-gateway.example/v1"
     },
     "anthropic": {
       "apiKey": "your-api-key",
@@ -683,8 +752,8 @@ You can also configure a self-hosted model in the configuration file under the `
 
 ```bash
 # Clone the repository
-git clone https://github.com/svpc-ai/svpc.git
-cd svpc
+git clone https://github.com/sovereignempirex-ux/svcp-ai.git
+cd svcp-ai
 
 # Build
 go build -o svpc

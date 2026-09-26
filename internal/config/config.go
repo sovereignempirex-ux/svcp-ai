@@ -111,6 +111,21 @@ type Config struct {
 // one writes to ~/.svpc.json.
 var configFileOverride string
 
+// UseFile names the configuration file, in place of the search path, and forgets
+// anything already loaded.
+//
+// This exists for tests, in this package and in the ones above it, which cannot
+// reach an unexported variable. It is exported for that reason alone and is not
+// part of any contract: the configuration is an internal package, so nothing a
+// program imports can see it, and a test that uses it has said out loud that it
+// is testing against a configuration of its own.
+//
+// Setting it does not load anything. The next Load reads this file.
+func UseFile(path string) {
+	cfg = nil
+	configFileOverride = path
+}
+
 // Application constants
 const (
 	defaultDataDirectory = ".svpc"
