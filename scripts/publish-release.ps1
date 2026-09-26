@@ -63,13 +63,19 @@ The token is only used for this script and is not stored.
 $root = Split-Path -Parent (Split-Path -Parent $MyInvocation.MyCommand.Definition)
 
 # The signed executable and the Android package are always here. The Unix
-# archives are whatever .goreleaser.yml last produced, gathered into dist/;
-# they are optional so a release can ship a subset rather than fail.
+# archives are whatever .goreleaser.yml last produced, gathered into dist/, as is
+# the npm tarball, so a release can ship a subset rather than fail.
 $assets = @(
   (Join-Path $root 'SVPC AI.exe'),
   (Join-Path $root 'android\dist\svpc-ai.apk')
 )
-$archives = @(Get-ChildItem (Join-Path $root 'dist') -Filter '*.tar.gz' -ErrorAction SilentlyContinue)
+# Both extension patterns, because they are different things: the Unix archives
+# are platform binaries, and the .tgz is the published JavaScript client. Missing
+# either is not an error - a release does not have to carry all of them.
+$archives = @(
+  Get-ChildItem (Join-Path $root 'dist') -Filter '*.tar.gz' -ErrorAction SilentlyContinue
+  Get-ChildItem (Join-Path $root 'dist') -Filter '*.tgz' -ErrorAction SilentlyContinue
+)
 $assets += @($archives | Select-Object -ExpandProperty FullName)
 
 $required = @($assets | Where-Object { $_ -notlike '*.tar.gz' })

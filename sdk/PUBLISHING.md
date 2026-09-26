@@ -104,6 +104,30 @@ unscoped. The name in `package.json` and the names in the two READMEs have to
 agree with whichever was chosen, or the documentation sends people to a package
 that cannot exist.
 
+## Publishing npm from a release asset
+
+The tarball is attached to every release as `svpc-ai-sdk-<version>.tgz`, so the
+publish does not depend on a working tree and the artefact is downloadable whether
+or not it ever reached the registry.
+
+```bash
+npm publish svpc-ai-sdk-1.0.0.tgz --otp=123456
+```
+
+The name printed by `npm pack` and the version in `package.json` are the same, and
+`sha1sum` of the tarball is the shasum npm reports, so a publish can be checked
+before and after:
+
+```bash
+npm pack
+sha1sum svpc-ai-sdk-*.tgz
+```
+
+`scripts/publish-release.ps1` gathers both `*.tar.gz` and `*.tgz` from `dist/`, and
+writes a SHA-256 for each into `checksums.txt`, so the release page is enough to
+verify what was uploaded.
+
+
 ## Verifying afterwards
 
 Both registries answer for themselves, and the answer is the one to trust — not the
