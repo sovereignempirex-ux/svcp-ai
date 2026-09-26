@@ -70,3 +70,7 @@ Thumbs.db
 /android/keystore/
 *.keystore
 *.jks
+
+# Python bytecode from the SDK tests.
+__pycache__/
+*.py[cod]
