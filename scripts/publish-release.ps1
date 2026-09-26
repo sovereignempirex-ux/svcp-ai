@@ -20,6 +20,31 @@ $ProgressPreference = 'SilentlyContinue'
 
 function Step($msg) { Write-Host "[$(Get-Date -Format 'HH:mm:ss')] $msg" }
 
+# ── Checksums ───────────────────────────────────────────────────
+# Written before anything is uploaded, and from the same list that is about to
+# be published, so it cannot describe a different set of files. A hand-kept
+# checksum file goes stale the moment an asset is replaced, and a stale one is
+# worse than none: it looks authoritative while being wrong.
+function Write-Checksums($paths, $target) {
+  $lines = @()
+  foreach ($p in $paths) {
+    # GitHub rewrites unsafe characters in an asset name, so the entry has to
+    # carry the name as it will be downloadable.
+    $name = (Get-UploadName (Split-Path $p -Leaf))
+    $lines += ("{0}  {1}" -f (Get-FileHash $p -Algorithm SHA256).Hash.ToLower(), $name)
+  }
+  # A trailing newline, because that is what sha256sum writes and what a
+  # verifier expects.
+  [System.IO.File]::WriteAllText($target, ($lines -join "`n") + "`n")
+  return $lines.Count
+}
+
+# GitHub rewrites characters it considers unsafe in an asset name — a space
+# becomes a dot, so "SVPC AI.exe" is stored and downloaded as "SVPC.AI.exe".
+# Comparing against the local name would never match, and a re-run would push
+# the whole file again for no reason.
+function Get-UploadName([string]$name) { return ($name -replace '[^A-Za-z0-9._-]', '.') }
+
 $token = $env:SVPC_GITHUB_TOKEN
 if (-not $token) {
   Write-Error @"
@@ -36,20 +61,35 @@ The token is only used for this script and is not stored.
 
 # ── What to publish ─────────────────────────────────────────────
 $root = Split-Path -Parent (Split-Path -Parent $MyInvocation.MyCommand.Definition)
+
+# The signed executable and the Android package are always here. The Unix
+# archives are whatever .goreleaser.yml last produced, gathered into dist/;
+# they are optional so a release can ship a subset rather than fail.
 $assets = @(
   (Join-Path $root 'SVPC AI.exe'),
   (Join-Path $root 'android\dist\svpc-ai.apk')
 )
-$missing = $assets | Where-Object { -not (Test-Path $_) }
+$archives = @(Get-ChildItem (Join-Path $root 'dist') -Filter '*.tar.gz' -ErrorAction SilentlyContinue)
+$assets += @($archives | Select-Object -ExpandProperty FullName)
+
+$required = @($assets | Where-Object { $_ -notlike '*.tar.gz' })
+$missing = $required | Where-Object { -not (Test-Path $_) }
 if ($missing) {
   Write-Error "missing: $($missing -join ', ')`nBuild them first: go build -o 'SVPC AI.exe' . and android/build-apk.ps1"
   exit 1
 }
 
+# The checksums cover every asset, so the file is part of the set and is
+# uploaded alongside them.
+$checksumPath = Join-Path $root 'dist\checksums.txt'
+$count = Write-Checksums $assets $checksumPath
+$assets += $checksumPath
+
 foreach ($a in $assets) {
   $size = [math]::Round((Get-Item $a).Length / 1MB, 2)
   Step "$(Split-Path $a -Leaf)  ($size MB)"
 }
+Step "$count checksums written to dist\checksums.txt"
 
 if ($DryRun) {
   Step "Dry run: would publish $Tag to $Repo with $($assets.Count) assets."

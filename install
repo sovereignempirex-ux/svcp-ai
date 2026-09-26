@@ -29,7 +29,10 @@ arch=$(uname -m)
 case "$arch" in
   x86_64|amd64) arch="x86_64" ;;
   aarch64|arm64) arch="arm64" ;;
-  i386|i686) arch="i386" ;;
+  # 32-bit is not built. The release has no 386 target, so accepting the
+  # architecture here only moved the failure from a clear message at the start to
+  # a download error a long way in, with nothing to tell the user what to do.
+  i386|i686) print_message "$RED" "32-bit is not supported$NC"; exit 1 ;;
   *) print_message "$RED" "Unsupported architecture: $arch$NC"; exit 1 ;;
 esac
 
@@ -45,8 +48,12 @@ archive="$APP-$os-$arch.tar.gz"
 
 # ── Already installed? ──────────────────────────────────────────
 if command -v "$APP" >/dev/null 2>&1; then
-  installed_version=$("$APP" --version 2>/dev/null | tr -d '\r' | head -n 1)
-  print_message "$GREEN" "Found $APP $installed_version at $(command -v "$APP")$NC"
+  # The version is only used for a message, so a binary that will not run — a
+  # wrong architecture, a truncated file — must not stop the install. Without
+  # the fallback the pipeline's non-zero status reaches `set -e` and the script
+  # dies here with nothing printed.
+  installed_version=$("$APP" --version 2>/dev/null | tr -d '\r' | head -n 1) || installed_version=""
+  print_message "$GREEN" "Found $APP ${installed_version:-of unknown version} at $(command -v "$APP")$NC"
   if [[ -z "${VERSION:-}" && "$installed_version" != *"dev"* ]]; then
     print_message "$YELLOW" "Re-run with VERSION=<tag> to install a specific release.$NC"
     exit 0
@@ -55,10 +62,29 @@ fi
 
 # ── Resolve the download ────────────────────────────────────────
 if [[ -z "${VERSION:-}" ]]; then
-  latest=$(curl -sSf "https://api.github.com/repos/$REPO/releases/latest" \
-    | awk -F'"' '/"tag_name": "/ {gsub(/^v/, "", $4); print $4; exit}')
-  if [[ -z "$latest" ]]; then
+  # The reply is fetched whole and parsed afterwards, never piped into awk.
+  # Piping makes the install depend on a race: awk stops at the first match and
+  # closes the pipe, so curl fails on the write with error 23, which `set -e`
+  # turns into a fatal error. A release body is several kilobytes, so the only
+  # question was whether the reader or the writer won.
+  if ! reply=$(curl -sSf "https://api.github.com/repos/$REPO/releases/latest"); then
+    print_message "$RED" "Could not reach GitHub to find the latest release.$NC"
+    print_message "$YELLOW" "Check the network, or pass VERSION=<tag> to skip this.$NC"
+    exit 1
+  fi
+
+  # Matched by the shell rather than by a child process, so there is no pipe to
+  # break. The leftmost occurrence is the field itself; a later one could only
+  # be release notes quoting it.
+  latest=""
+  if [[ "$reply" =~ \"tag_name\"[[:space:]]*:[[:space:]]*\"v?([^\"]+)\" ]]; then
+    latest="${BASH_REMATCH[1]}"
+  fi
+  # A tag that does not begin with a digit means the field was not found, and
+  # building a download URL out of it would fail later and less clearly.
+  if [[ ! "$latest" =~ ^[0-9] ]]; then
     print_message "$RED" "Could not read the latest release from GitHub.$NC"
+    print_message "$YELLOW" "Pass VERSION=<tag> to install a specific release.$NC"
     exit 1
   fi
 else
