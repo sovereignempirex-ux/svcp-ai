@@ -640,7 +640,46 @@ func applyOverrides(c Config) error {
 			return err
 		}
 	}
+
+	// The endpoint the client should talk to. This field has been in the request
+	// since the desktop client was written and was never read, which left a
+	// gateway or local model server unreachable and the field a promise nothing
+	// kept.
+	if base := strings.TrimSpace(c.BaseURL); base != "" {
+		provider := strings.ToLower(strings.TrimSpace(c.Provider))
+		if provider == "" {
+			// No provider was named, so the one already configured is the one the
+			// base URL must belong to; guessing a different one would point the
+			// agent at an endpoint it does not use.
+			provider = configuredProviderName()
+		}
+		if provider == "" {
+			return errors.New("no provider is configured, so base_url has nothing to apply to")
+		}
+		if err := config.UpdateProviderBaseURL(provider, base); err != nil {
+			return err
+		}
+	}
 	return nil
+}
+
+// configuredProviderName is the provider the coder agent is currently set to, or
+// empty when there is none. It is what a base_url with no provider of its own
+// applies to.
+func configuredProviderName() string {
+	cfg := config.Get()
+	if cfg == nil {
+		return ""
+	}
+	agent, ok := cfg.Agents[config.AgentCoder]
+	if !ok {
+		return ""
+	}
+	model, ok := models.SupportedModels[agent.Model]
+	if !ok {
+		return ""
+	}
+	return string(model.Provider)
 }
 
 // prettyToolName maps a tool identifier to the label shown in the UI.

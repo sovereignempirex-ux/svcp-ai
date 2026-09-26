@@ -23,6 +23,10 @@ type anthropicOptions struct {
 	useBedrock   bool
 	disableCache bool
 	shouldThink  func(userMessage string) bool
+	// baseURL overrides the endpoint the client talks to. It is what makes a
+	// gateway that speaks the Anthropic API reachable, and it is empty for the
+	// real service, where the SDK's own default is correct.
+	baseURL string
 }
 
 type AnthropicOption func(*anthropicOptions)
@@ -44,6 +48,9 @@ func newAnthropicClient(opts providerClientOptions) AnthropicClient {
 	anthropicClientOptions := []option.RequestOption{}
 	if opts.apiKey != "" {
 		anthropicClientOptions = append(anthropicClientOptions, option.WithAPIKey(opts.apiKey))
+	}
+	if anthropicOpts.baseURL != "" {
+		anthropicClientOptions = append(anthropicClientOptions, option.WithBaseURL(anthropicOpts.baseURL))
 	}
 	if anthropicOpts.useBedrock {
 		anthropicClientOptions = append(anthropicClientOptions, bedrock.WithLoadDefaultConfig(context.Background()))
@@ -197,8 +204,7 @@ func (a *anthropicClient) preparedMessages(messages []anthropic.MessageParam, to
 
 func (a *anthropicClient) send(ctx context.Context, messages []message.Message, tools []toolsPkg.BaseTool) (resposne *ProviderResponse, err error) {
 	preparedMessages := a.preparedMessages(a.convertMessages(messages), a.convertTools(tools))
-	cfg := config.Get()
-	if cfg.Debug {
+	if cfg := config.Get(); cfg != nil && cfg.Debug {
 		jsonData, _ := json.Marshal(preparedMessages)
 		logging.Debug("Prepared messages", "messages", string(jsonData))
 	}
@@ -246,11 +252,12 @@ func (a *anthropicClient) send(ctx context.Context, messages []message.Message, 
 
 func (a *anthropicClient) stream(ctx context.Context, messages []message.Message, tools []toolsPkg.BaseTool) <-chan ProviderEvent {
 	preparedMessages := a.preparedMessages(a.convertMessages(messages), a.convertTools(tools))
-	cfg := config.Get()
-
-	var sessionId string
-	requestSeqId := (len(messages) + 1) / 2
-	if cfg.Debug {
+	// Get returns nil until the configuration has been loaded, and a provider
+	// asked to stream before that — by a test, or by a program embedding this
+	// package — used to take the process down here rather than run.
+	if cfg := config.Get(); cfg != nil && cfg.Debug {
+		var sessionId string
+		requestSeqId := (len(messages) + 1) / 2
 		if sid, ok := ctx.Value(toolsPkg.SessionIDContextKey).(string); ok {
 			sessionId = sid
 		}
@@ -452,6 +459,17 @@ func (a *anthropicClient) usage(msg anthropic.Message) TokenUsage {
 func WithAnthropicBedrock(useBedrock bool) AnthropicOption {
 	return func(options *anthropicOptions) {
 		options.useBedrock = useBedrock
+	}
+}
+
+// WithAnthropicBaseURL points the client at a different endpoint. It exists
+// because the chat request has carried a base_url since the desktop client was
+// written, and nothing ever read it, so a gateway that speaks the Anthropic API
+// could not be reached at all. Empty means the real service, which is the SDK's
+// own default.
+func WithAnthropicBaseURL(baseURL string) AnthropicOption {
+	return func(options *anthropicOptions) {
+		options.baseURL = strings.TrimRight(strings.TrimSpace(baseURL), "/")
 	}
 }
 

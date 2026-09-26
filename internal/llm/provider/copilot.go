@@ -308,12 +308,16 @@ func (c *copilotClient) preparedParams(messages []openai.ChatCompletionMessagePa
 
 func (c *copilotClient) send(ctx context.Context, messages []message.Message, tools []toolsPkg.BaseTool) (response *ProviderResponse, err error) {
 	params := c.preparedParams(c.convertMessages(messages), c.convertTools(tools))
+	// Get returns nil until the configuration has been loaded, and a provider
+	// asked to work before that — by a test, or by a program embedding this
+	// package — used to take the process down here rather than run. The debug log
+	// is worth having and is not worth a panic, so the flag is resolved once and
+	// the session variables stay in scope for the rest of the stream.
 	cfg := config.Get()
+	debug := cfg != nil && cfg.Debug
 	var sessionId string
 	requestSeqId := (len(messages) + 1) / 2
-	if cfg.Debug {
-		// jsonData, _ := json.Marshal(params)
-		// logging.Debug("Prepared messages", "messages", string(jsonData))
+	if debug {
 		if sid, ok := ctx.Value(toolsPkg.SessionIDContextKey).(string); ok {
 			sessionId = sid
 		}
@@ -379,10 +383,13 @@ func (c *copilotClient) stream(ctx context.Context, messages []message.Message, 
 		IncludeUsage: openai.Bool(true),
 	}
 
+	// As in send: the configuration may not have been loaded, and the debug log
+	// must not be the thing that brings the process down.
 	cfg := config.Get()
+	debug := cfg != nil && cfg.Debug
 	var sessionId string
 	requestSeqId := (len(messages) + 1) / 2
-	if cfg.Debug {
+	if debug {
 		if sid, ok := ctx.Value(toolsPkg.SessionIDContextKey).(string); ok {
 			sessionId = sid
 		}
@@ -418,7 +425,7 @@ func (c *copilotClient) stream(ctx context.Context, messages []message.Message, 
 				chunk := copilotStream.Current()
 				acc.AddChunk(chunk)
 
-				if cfg.Debug {
+				if debug {
 					logging.AppendToStreamSessionLogJson(sessionId, requestSeqId, chunk)
 				}
 
@@ -481,7 +488,7 @@ func (c *copilotClient) stream(ctx context.Context, messages []message.Message, 
 
 			err := copilotStream.Err()
 			if err == nil || errors.Is(err, io.EOF) {
-				if cfg.Debug {
+				if debug {
 					respFilepath := logging.WriteChatResponseJson(sessionId, requestSeqId, acc.ChatCompletion)
 					logging.Debug("Chat completion response", "filepath", respFilepath)
 				}

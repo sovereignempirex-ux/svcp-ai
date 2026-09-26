@@ -187,8 +187,11 @@ func (o *openaiClient) preparedParams(messages []openai.ChatCompletionMessagePar
 
 func (o *openaiClient) send(ctx context.Context, messages []message.Message, tools []tools.BaseTool) (response *ProviderResponse, err error) {
 	params := o.preparedParams(o.convertMessages(messages), o.convertTools(tools))
-	cfg := config.Get()
-	if cfg.Debug {
+	// Get returns nil until the configuration has been loaded, and a provider
+	// asked to work before that — or by a test, or by a library embedding this
+	// package — used to take the process down here rather than run. The debug log
+	// is worth having and is not worth a panic.
+	if cfg := config.Get(); cfg != nil && cfg.Debug {
 		jsonData, _ := json.Marshal(params)
 		logging.Debug("Prepared messages", "messages", string(jsonData))
 	}
@@ -244,8 +247,7 @@ func (o *openaiClient) stream(ctx context.Context, messages []message.Message, t
 		IncludeUsage: openai.Bool(true),
 	}
 
-	cfg := config.Get()
-	if cfg.Debug {
+	if cfg := config.Get(); cfg != nil && cfg.Debug {
 		jsonData, _ := json.Marshal(params)
 		logging.Debug("Prepared messages", "messages", string(jsonData))
 	}

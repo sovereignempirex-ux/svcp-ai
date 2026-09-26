@@ -731,6 +731,17 @@ func createAgentProvider(agentName config.AgentName) (provider.Provider, error) 
 		provider.WithSystemMessage(prompt.GetAgentPrompt(agentName, model.Provider)),
 		provider.WithMaxTokens(maxTokens),
 	}
+	// A configured endpoint reaches the client. Only the two providers whose SDKs
+	// can be pointed elsewhere support one; for the rest the value is ignored
+	// rather than silently appended to a URL the SDK does not use.
+	if base := strings.TrimSpace(providerCfg.BaseURL); base != "" {
+		switch model.Provider {
+		case models.ProviderOpenAI:
+			opts = append(opts, provider.WithOpenAIOptions(provider.WithOpenAIBaseURL(base)))
+		case models.ProviderAnthropic:
+			opts = append(opts, provider.WithAnthropicOptions(provider.WithAnthropicBaseURL(base)))
+		}
+	}
 	if model.Provider == models.ProviderOpenAI || model.Provider == models.ProviderLocal && model.CanReason {
 		opts = append(
 			opts,

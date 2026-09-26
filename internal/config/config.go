@@ -54,6 +54,11 @@ type Agent struct {
 type Provider struct {
 	APIKey   string `json:"apiKey"`
 	Disabled bool   `json:"disabled"`
+	// BaseURL overrides the endpoint this provider talks to. It is empty for the
+	// real service, where the client's own default is correct, and set for a
+	// gateway or proxy that speaks the same API: LiteLLM, a corporate egress, or
+	// a local model server.
+	BaseURL string `json:"baseUrl,omitempty"`
 }
 
 // Data defines storage configuration.
@@ -95,6 +100,16 @@ type Config struct {
 	Shell        ShellConfig                       `json:"shell,omitempty"`
 	AutoCompact  bool                              `json:"autoCompact,omitempty"`
 }
+
+// configFileOverride names the configuration file outright, in place of the
+// search path.
+//
+// It is empty in a running program, which is the point: nothing outside this
+// package can set it, and the test suite sets it so that loading the
+// configuration cannot reach the settings of whoever is running the tests. Every
+// setter persists to whichever file was used, so without this a test that calls
+// one writes to ~/.svpc.json.
+var configFileOverride string
 
 // Application constants
 const (
@@ -224,6 +239,17 @@ func configureViper() {
 	viper.AddConfigPath(fmt.Sprintf("$HOME/.config/%s", appName))
 	viper.SetEnvPrefix(strings.ToUpper(appName))
 	viper.AutomaticEnv()
+
+	// Applied last, because viper clears an explicitly named file whenever the
+	// config name is set, and the name is set just above.
+	//
+	// This is the seam the test suite uses. Empty in a running program, so the
+	// search path is the only thing that decides where settings come from; a test
+	// that loads the configuration without naming a file will resolve the search
+	// path, find the real one, and rewrite the settings of whoever is running it.
+	if configFileOverride != "" {
+		viper.SetConfigFile(configFileOverride)
+	}
 }
 
 // setDefaults configures default values for configuration options.
@@ -274,7 +300,7 @@ func setProviderDefaults() {
 		viper.SetDefault("providers.xai.apiKey", apiKey)
 	}
 	if apiKey := os.Getenv("AZURE_OPENAI_ENDPOINT"); apiKey != "" {
-		// api-key may be empty when using Entra ID credentials – that's okay
+		// api-key may be empty when using Entra ID credentials Ã¢â‚¬â€œ that's okay
 		viper.SetDefault("providers.azure.apiKey", os.Getenv("AZURE_OPENAI_API_KEY"))
 	}
 	if apiKey, err := LoadGitHubToken(); err == nil && apiKey != "" {
@@ -938,6 +964,37 @@ func UpdateProviderAPIKey(providerName string, apiKey string) error {
 		existing := config.Providers[name]
 		existing.APIKey = apiKey
 		existing.Disabled = false
+		config.Providers[name] = existing
+	})
+}
+
+// UpdateProviderBaseURL points a provider at a different endpoint, and persists
+// it. The chat request has carried a base_url since the desktop client was
+// written and nothing read it, so a gateway that speaks the same API could not
+// be used at all. An empty value restores the service's own default.
+//
+// It deliberately does not re-enable a provider the way the key setter does:
+// choosing an endpoint is not a statement about credentials, and silently
+// switching on something the user turned off would be worse than failing.
+func UpdateProviderBaseURL(providerName string, baseURL string) error {
+	if cfg == nil {
+		panic("config not loaded")
+	}
+
+	name := models.ModelProvider(strings.ToLower(providerName))
+	provider, ok := cfg.Providers[name]
+	if !ok {
+		return fmt.Errorf("provider %s is not configured", providerName)
+	}
+	provider.BaseURL = strings.TrimRight(strings.TrimSpace(baseURL), "/")
+	cfg.Providers[name] = provider
+
+	return updateCfgFile(func(config *Config) {
+		if config.Providers == nil {
+			config.Providers = make(map[models.ModelProvider]Provider)
+		}
+		existing := config.Providers[name]
+		existing.BaseURL = provider.BaseURL
 		config.Providers[name] = existing
 	})
 }
