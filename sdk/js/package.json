@@ -1,5 +1,5 @@
 {
-  "name": "@svpc-ai/client",
+  "name": "svpc-ai-sdk",
   "version": "1.0.0",
   "description": "A client for the SVPC AI HTTP API, for the browser, Deno, Bun and Node.",
   "type": "module",
@@ -24,7 +24,7 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/sovereignempirex-ux/svcp-ai.git",
+    "url": "git+https://github.com/sovereignempirex-ux/svcp-ai.git",
     "directory": "sdk/js"
   },
   "homepage": "https://github.com/sovereignempirex-ux/svcp-ai#readme",

@@ -117,7 +117,7 @@ with Client("192.168.1.20", 8080, token) as agent:
 ```
 
 ```js
-import { Client } from '@svpc-ai/client';
+import { Client } from 'svpc-ai-sdk';
 
 const agent = new Client({ host: '192.168.1.20', port: 8080, token });
 await agent.version();

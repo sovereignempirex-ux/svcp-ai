@@ -55,7 +55,6 @@ Thumbs.db
 
 # Local application data: sessions, logs and generated images.
 /.svpc/
-/dist/
 
 # A pristine copy of the upstream project, kept alongside for reference.
 /opencode-main/
@@ -74,3 +73,5 @@ Thumbs.db
 # Python bytecode from the SDK tests.
 __pycache__/
 *.py[cod]
+sdk/python/dist/
+sdk/python/*.egg-info/
