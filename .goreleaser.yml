@@ -1,67 +1,96 @@
+# Release automation for SVPC AI.
+#
+# The names here have to agree with the `install` script, which downloads
+# "<project>-<os>-<arch>.tar.gz" from the release, and with
+# scripts/publish-release.ps1, which attaches the Windows executable and the
+# Android package.
+#
+# The AUR and Homebrew sections from the upstream project were removed rather
+# than renamed: they pointed at another organisation's repositories, and a
+# release run would have tried to push there.
 version: 2
-project_name: opencode
+project_name: svpc
+
 before:
   hooks:
+    # Nothing to generate: the version is stamped at link time below.
+
 builds:
-  - env:
+  - id: svpc
+    main: .
+    env:
+      # Pure Go: no cgo, so one binary runs anywhere and cross-compiles cleanly.
       - CGO_ENABLED=0
-    goos:
-      - linux
-      - darwin
-    goarch:
-      - amd64
-      - arm64
+    goos: [linux, darwin, windows]
+    goarch: [amd64, arm64]
+    goarm: ["6"]
+    ignore:
+      # 32-bit Windows is not a platform worth shipping for.
+      - goos: windows
+        goarch: arm64
+      - goos: windows
+        goarch: "386"
     ldflags:
-      - -s -w -X github.com/opencode-ai/opencode/internal/version.Version={{.Version}}
-    main: ./main.go
+      # -s -w drops the symbol table and DWARF data, which is about a third of
+      # the binary. The version is stamped so `svpc --version` reports the tag.
+      - -s -w -X github.com/svpc-ai/svpc/internal/version.Version={{.Version}}
+    # The desktop window is a WebView over a loopback bridge. Building it as a
+    # console program would leave a black window behind the window on Windows.
+    tags: []
 
 archives:
-  - format: tar.gz
-    name_template: >-
-      opencode-
-      {{- if eq .Os "darwin" }}mac-
-      {{- else if eq .Os "windows" }}windows-
-      {{- else if eq .Os "linux" }}linux-{{end}}
-      {{- if eq .Arch "amd64" }}x86_64
-      {{- else if eq .Arch "#86" }}i386
-      {{- else }}{{ .Arch }}{{ end }}
-      {{- if .Arm }}v{{ .Arm }}{{ end }}
+  - id: svpc
+    formats: [tar.gz]
     format_overrides:
       - goos: windows
-        format: zip
-checksum:
-  name_template: "checksums.txt"
-snapshot:
-  name_template: "0.0.0-{{ .Timestamp }}"
-aurs:
-  - name: opencode-ai
-    homepage: "https://github.com/opencode-ai/opencode"
-    description: "terminal based agent that can build anything"
-    maintainers:
-      - "kujtimiihoxha <kujtimii.h@gmail.com>"
-    license: "MIT"
-    private_key: "{{ .Env.AUR_KEY }}"
-    git_url: "ssh://aur@aur.archlinux.org/svpc-ai-bin.git"
-    provides:
-      - opencode
-    conflicts:
-      - opencode
-    package: |-
-      install -Dm755 ./opencode "${pkgdir}/usr/bin/opencode"
-brews:
-  - repository:
-      owner: opencode-ai
-      name: homebrew-tap
-nfpms:
-  - maintainer: kujtimiihoxha
-    description: terminal based agent that can build anything
-    formats:
-      - deb
-      - rpm
-    file_name_template: >-
+        formats: [zip]
+    name_template: >-
       {{ .ProjectName }}-
       {{- if eq .Os "darwin" }}mac
-      {{- else }}{{ .Os }}{{ end }}-{{ .Arch }}
+      {{- else if eq .Os "windows" }}windows
+      {{- else if eq .Os "linux" }}linux
+      {{- else }}{{ .Os }}{{ end }}-
+      {{- if eq .Arch "amd64" }}x86_64
+      {{- else if eq .Arch "386" }}i386
+      {{- else }}{{ .Arch }}{{ end }}
+    files:
+      - LICENSE
+      - README.md
+
+checksum:
+  name_template: checksums.txt
+  algorithm: sha256
+
+snapshot:
+  version_template: "{{ incpatch .Version }}-snapshot"
+
+# Android and the signed Windows executable are produced by their own scripts
+# and attached by scripts/publish-release.ps1, because both need a signing key
+# that does not belong in a build pipeline.
+nfpms:
+  - id: svpc
+    package_name: svpc-ai
+    file_name_template: >-
+      {{ .ProjectName }}_{{ .Version }}_
+      {{- if eq .Os "darwin" }}mac
+      {{- else }}{{ .Os }}{{ end }}_
+      {{- if eq .Arch "amd64" }}amd64
+      {{- else if eq .Arch "386" }}386
+      {{- else }}{{ .Arch }}{{ end }}
+    maintainer: SVPC AI <support@svpc-ai.dev>
+    description: |-
+      An agentic coding assistant for the terminal and the desktop.
+      Runs in a terminal, in a native window, and from a phone over the network.
+    vendor: SVPC AI
+    homepage: https://github.com/sovereignempirex-ux/svcp-ai
+    license: MIT
+    formats: [deb, rpm]
+    bindir: /usr/bin
+    # The data directory and any configured model are the user's, not the
+    # package's, so nothing is added beside /usr/bin.
+    contents:
+      - src: LICENSE
+        dst: /usr/share/doc/svpc-ai
 
 changelog:
   sort: asc
@@ -74,3 +103,5 @@ changelog:
       - "^ignore:"
       - "^example:"
       - "^wip:"
+      # The branch rename is bookkeeping, not a change anyone needs to read.
+      - "branch rename"

@@ -160,7 +160,7 @@ func Load(workingDir string, debug bool) (*Config, error) {
 	if cfg.Debug {
 		defaultLevel = slog.LevelDebug
 	}
-	if os.Getenv("OPENCODE_DEV_DEBUG") == "true" {
+	if os.Getenv("SVPC_DEV_DEBUG") == "true" {
 		loggingFile := fmt.Sprintf("%s/%s", cfg.Data.Directory, "debug.log")
 		messagesPath := fmt.Sprintf("%s/%s", cfg.Data.Directory, "messages")
 

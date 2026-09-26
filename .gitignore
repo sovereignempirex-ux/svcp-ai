@@ -41,11 +41,6 @@ Thumbs.db
 .env
 .env.local
 
-.opencode/
-
-opencode
-opencode.md
-
 # SVPC AI build and packaging artifacts
 # resource.syso is generated from the icon and versioninfo.json by goversioninfo
 # at build time; it must not be committed because it differs per build host.

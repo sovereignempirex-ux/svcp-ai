@@ -7,14 +7,14 @@ package styles
 // terminal cell whenever possible, which keeps width calculations predictable.
 const (
 	// Brand
-	OpenCodeIcon string = "⌬"
-	SparkIcon    string = "✦" // AI / agent accents
-	SectionIcon  string = "◆" // sidebar + panel section markers
-	DotIcon      string = "●" // status dot (idle / ok / busy)
-	BulletIcon   string = "▸" // list bullet
-	ChevronIcon  string = "›" // disclosure / navigation
-	ArrowIcon    string = "→" // "go to" hint
-	PromptIcon   string = "❯" // chat input prompt
+	BrandIcon   string = "⌬"
+	SparkIcon   string = "✦" // AI / agent accents
+	SectionIcon string = "◆" // sidebar + panel section markers
+	DotIcon     string = "●" // status dot (idle / ok / busy)
+	BulletIcon  string = "▸" // list bullet
+	ChevronIcon string = "›" // disclosure / navigation
+	ArrowIcon   string = "→" // "go to" hint
+	PromptIcon  string = "❯" // chat input prompt
 
 	// Status / results
 	CheckIcon   string = "✓"

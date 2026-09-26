@@ -1,0 +1,53 @@
+# Git is told to check out LF and store LF, which is the opposite of what it
+# was doing: without this, every checkout rewrote the Go sources in the working
+# tree and every add printed a warning.
+
+# Default: text files are normalised in the repository and checked out as LF.
+* text=auto eol=lf
+
+# Windows-native formats. PowerShell and batch read CRLF natively, and a file
+# with LF endings runs, but the shebang-style line handling in a .cmd with LF is
+# unreliable enough to be worth pinning.
+*.ps1   text eol=crlf
+*.cmd   text eol=crlf
+*.bat   text eol=crlf
+*.sln   text eol=crlf
+*.vcxproj text eol=crlf
+
+# Shell scripts need LF: a CRLF in a shebang makes the kernel look for
+# "/bin/sh\r" and fail with a confusing message.
+*.sh    text eol=lf
+install text eol=lf
+
+# Sources that a tool may require to be byte-exact.
+*.go    text eol=lf
+*.sql   text eol=lf
+*.js    text eol=lf
+*.css   text eol=lf
+*.html  text eol=lf
+*.xml   text eol=lf
+*.json  text eol=lf
+*.yml   text eol=lf
+*.yaml  text eol=lf
+*.md    text eol=lf
+
+# Never touched: a byte difference would change the file.
+*.ico   binary
+*.png   binary
+*.jpg   binary
+*.jpeg  binary
+*.gif   binary
+*.pdf   binary
+*.zip   binary
+*.exe   binary
+*.dll   binary
+*.so    binary
+*.dylib binary
+*.jar   binary
+*.apk   binary
+*.syso  binary
+*.keystore binary
+*.pfx   binary
+*.p12   binary
+*.pem   binary
+*.cer   binary

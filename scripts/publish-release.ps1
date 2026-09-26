@@ -89,32 +89,53 @@ function Invoke-GitHub($method, $uri, $body) {
 $notes = @"
 ## SVPC AI $Tag
 
-One executable, three ways to use it.
+One agent, four ways to reach it. The executable and the archives below are the
+same program; what changes is where the interface is drawn.
 
-| | |
-|---|---|
-| **Windows** | Download `SVPC AI.exe` and run it. Double-click opens the window; `svpc` from a shell opens the terminal UI. |
-| **Android** | Download `svpc-ai.apk`, install it, then on the computer run `svpc --serve 0.0.0.0 --serve-port 8080` and enter the address and token it prints. |
-| **Terminal** | The same binary is a full terminal UI: `svpc -p "explain this repo"`. |
+| Platform | File | Getting it |
+|---|---|---|
+| Windows | `SVPC.AI.exe` | Download and run. Double-click opens the window; `svpc` from a shell opens the terminal UI. |
+| Linux | `svpc-linux-x86_64.tar.gz`, `svpc-linux-arm64.tar.gz` | `./install`, or unpack and put `svpc` on your PATH. |
+| macOS | `svpc-mac-x86_64.tar.gz`, `svpc-mac-arm64.tar.gz` | `./install`, or unpack and put `svpc` on your PATH. |
+| Android | `svpc-ai.apk` | Install it, then run `svpc --serve 0.0.0.0` on the computer. |
+
+`checksums.txt` carries a SHA-256 for every file here.
+
+### Using it
+
+    svpc                          the terminal interface
+    svpc --gui                    the desktop window
+    svpc --serve 0.0.0.0          serve the same interface to a phone
+    svpc -p "explain this repo"    one non-interactive prompt
 
 The Android app is a client. The agent, its tools and its sessions run on the
-machine you started the bridge on, which is why a phone can drive a build but
-cannot run one.
+machine that started the bridge, which is why a phone can drive a build but
+cannot run one: those tools need a shell and a filesystem.
+
+`--serve` refuses to start without a token. The bridge runs commands, writes
+files and deploys, so it is not something to leave unauthenticated on a network.
 
 ### Note on the Windows file
 
 Windows Smart App Control blocks executables that are not signed by a
 certificate Microsoft trusts, so this build carries a self-signed one. If
-Windows refuses to run it, that is the reason; see the repository for how to
-install the certificate or to supply a certificate of your own.
+Windows refuses to run it, that is why. The Unix builds are unaffected: they
+carry no signature and are governed by your own policy instead.
 "@
 
 $existing = $null
 try { $existing = Invoke-RestMethod "https://api.github.com/repos/$Repo/releases/tags/$Tag" -Headers $headers } catch { }
 
 if ($existing) {
-  Step "Release $Tag already exists; uploading to it."
-  $release = $existing
+  Step "Release $Tag already exists; refreshing its notes and uploading to it."
+  # The notes are the only part a re-run can meaningfully change, and leaving a
+  # stale install table on a published release is worse than rewriting it.
+  $release = Invoke-GitHub 'PATCH' "/repos/$Repo/releases/$($existing.id)" @{
+    name        = $existing.name
+    body        = $notes
+    draft       = $existing.draft
+    prerelease  = $existing.prerelease
+  }
 } else {
   Step "Creating release $Tag..."
   $release = Invoke-GitHub 'POST' "/repos/$Repo/releases" @{

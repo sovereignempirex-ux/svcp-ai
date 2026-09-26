@@ -4,19 +4,19 @@ import (
 	"github.com/charmbracelet/lipgloss"
 )
 
-// OpenCodeTheme implements the Theme interface with OpenCode brand colors.
+// SVPCTheme implements the Theme interface with the SVPC AI palette.
 // It provides both dark and light variants.
 //
 // The palette is built around a deep, blue-tinted near-black canvas with a
 // single bright accent (cyan) plus a restrained secondary (violet) and warm
 // highlight. Status colours only surface when they carry meaning, so the
 // screen stays calm during long sessions.
-type OpenCodeTheme struct {
+type SVPCTheme struct {
 	BaseTheme
 }
 
-// NewOpenCodeTheme creates a new instance of the OpenCode theme.
-func NewOpenCodeTheme() *OpenCodeTheme {
+// NewSVPCTheme creates a new instance of the SVPC AI theme.
+func NewSVPCTheme() *SVPCTheme {
 	// Dark mode colors
 	darkBackground := "#0A0C11"  // deep canvas
 	darkCurrentLine := "#10131A" // elevated surface (glass panels)
@@ -49,7 +49,7 @@ func NewOpenCodeTheme() *OpenCodeTheme {
 	lightYellow := "#9A7412"    // Emphasized text
 	lightBorder := "#D4D8E0"    // Border color
 
-	theme := &OpenCodeTheme{}
+	theme := &SVPCTheme{}
 
 	// Base colors
 	theme.PrimaryColor = lipgloss.AdaptiveColor{
@@ -275,6 +275,6 @@ func NewOpenCodeTheme() *OpenCodeTheme {
 }
 
 func init() {
-	// Register the OpenCode theme with the theme manager
-	RegisterTheme("svpc", NewOpenCodeTheme())
+	// Register the SVPC AI theme with the theme manager
+	RegisterTheme("svpc", NewSVPCTheme())
 }

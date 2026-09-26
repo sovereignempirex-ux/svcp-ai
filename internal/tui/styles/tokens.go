@@ -7,7 +7,7 @@ import (
 	"github.com/svpc-ai/svpc/internal/tui/theme"
 )
 
-// Design tokens for the OpenCode interface.
+// Design tokens for the SVPC AI interface.
 //
 // This file is the single source of truth for the visual language of the app:
 // spacing, borders, surfaces, shared chrome (panels, dialogs, chips, empty

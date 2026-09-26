@@ -105,11 +105,11 @@ func logo(width int) string {
 
 	brand := base.
 		Foreground(t.Primary()).
-		Render(styles.OpenCodeIcon)
+		Render(styles.BrandIcon)
 	name := base.
 		Bold(true).
 		Foreground(t.Text()).
-		Render(" OpenCode")
+		Render(" SVPC AI")
 
 	versionText := base.
 		Foreground(t.TextMuted()).
