@@ -199,6 +199,7 @@ function Get-UploadName([string]$name) { return ($name -replace '[^A-Za-z0-9._-]
 
 foreach ($path in $assets) {
   $name = Get-UploadName (Split-Path $path -Leaf)
+  $localHash = (Get-FileHash $path -Algorithm SHA256).Hash.ToLower()
   $localSize = (Get-Item $path).Length
 
   # A re-run should not push 61 MB again. The release's own record is
@@ -206,15 +207,29 @@ foreach ($path in $assets) {
   $existing = (Invoke-RestMethod "https://api.github.com/repos/$Repo/releases/tags/$Tag" -Headers $headers).assets |
     Where-Object { $_.name -eq $name }
 
-  if ($existing -and $existing.size -eq $localSize) {
-    Step "  skip  $name  already published, $localSize bytes"
+  # Compared by digest, not by length. A checksum file is the one asset whose
+  # content changes without its size changing, so a length comparison declares
+  # the old hashes current and the release goes on advertising digests that no
+  # longer match the files it serves. GitHub reports a sha256 for every asset, so
+  # the exact answer costs one hash of the local file, which is already computed
+  # for checksums.txt.
+  $publishedDigest = ''
+  if ($existing -and $existing.digest) { $publishedDigest = ($existing.digest -replace '^sha256:', '').ToLower() }
+
+  if ($existing -and $publishedDigest -eq $localHash) {
+    Step "  skip  $name  already published and identical"
     continue
   }
 
   if ($existing) {
-    # A different size means it was rebuilt, so the old one has to go first:
+    # A different digest means it was rebuilt, so the old one has to go first:
     # GitHub will not overwrite an asset in place.
-    Step "  replace $name  ($($existing.size) -> $localSize bytes)"
+    if ($existing.digest) {
+      Step "  replace $name  (content differs; same $localSize bytes is not the same file)"
+    }
+    else {
+      Step "  replace $name  ($($existing.size) -> $localSize bytes, no published digest to compare)"
+    }
     Invoke-RestMethod -Method Delete -Uri "https://api.github.com/repos/$Repo/releases/assets/$($existing.id)" -Headers $headers | Out-Null
     Start-Sleep -Seconds 2
   }
@@ -242,6 +257,7 @@ Step "Verifying what was published..."
 $problems = @()
 foreach ($path in $assets) {
   $name = Get-UploadName (Split-Path $path -Leaf)
+  $localHash = (Get-FileHash $path -Algorithm SHA256).Hash.ToLower()
   $localSize = (Get-Item $path).Length
 
   $published = $null
@@ -254,11 +270,25 @@ foreach ($path in $assets) {
 
   if (-not $published) {
     $problems += "$name is not attached to the release"
-  } elseif ($published.size -ne $localSize) {
-    $problems += "$name is $localSize bytes locally but $($published.size) on the release"
-  } else {
-    Step "  ok  $name  $localSize bytes"
+    continue
   }
+  if ($published.size -ne $localSize) {
+    $problems += "$name is $localSize bytes locally but $($published.size) on the release"
+    continue
+  }
+  # Same length is not the same file, and the one asset where that matters most
+  # is the checksum file, so the digest GitHub computed is compared as well.
+  $publishedDigest = ''
+  if ($published.digest) { $publishedDigest = ($published.digest -replace '^sha256:', '').ToLower() }
+  if ($publishedDigest -and $publishedDigest -ne $localHash) {
+    $problems += "$name is the same size but different bytes; the release is serving $publishedDigest, the file is $localHash"
+    continue
+  }
+  if (-not $publishedDigest) {
+    $problems += "$name was published without a digest, so its bytes could not be checked"
+    continue
+  }
+  Step "  ok  $name  $localSize bytes, digest matches"
 }
 
 if ($problems) {
