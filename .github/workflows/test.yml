@@ -92,7 +92,27 @@ jobs:
       # A client for a tool that runs commands should not drag a tree into whatever
       # program uses it.
       - run: node --test
-      - run: node -e "import('./client.js').then(m => { for (const n of ['Client','ApiError','ALLOW','DENY','readEvents','decode']) { if (!(n in m)) { console.error('missing export: ' + n); process.exit(1) } } console.log('exports ok') })"
+
+      # A block scalar, because the line has a colon inside a string literal and
+      # an unquoted YAML scalar would read that colon as a mapping. The tests
+      # already import every one of these, so this is a belt to their braces: it
+      # says which names are part of the surface, rather than leaving it to be
+      # inferred from a test file.
+      - name: the published surface is what the documentation says
+        run: |
+          node -e "
+            import('./client.js').then((m) => {
+              const wanted = ['Client', 'ApiError', 'Model', 'Permission', 'Session',
+                              'Tool', 'ToolError', 'ALLOW', 'ALLOW_SESSION', 'DENY',
+                              'API_VERSION', 'readEvents', 'decode'];
+              const missing = wanted.filter((n) => !(n in m));
+              if (missing.length) {
+                console.error('missing exports: ' + missing.join(', '));
+                process.exit(1);
+              }
+              console.log(wanted.length + ' exports present');
+            });
+          "
 
   python:
     name: sdk/python

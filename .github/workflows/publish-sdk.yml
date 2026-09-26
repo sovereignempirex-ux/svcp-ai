@@ -1,0 +1,109 @@
+name: publish-sdk
+
+# Publishes the JavaScript client to npm without a token and without a one-time
+# code.
+#
+# npm's trusted publishing authenticates a workflow by its own identity: GitHub
+# signs a token for a specific repository, file and workflow, and npm trusts that
+# signature. There is nothing to store, nothing to rotate, and no code in a log.
+#
+# It is the durable answer to the problem that stopped this project: an account
+# with two-factor authentication cannot publish with a token alone, and every
+# token-based workaround is a secret that ends up somewhere it should not.
+#
+# ONE STEP IS STILL NEEDED, once, by the account holder:
+#
+#   npmjs.com -> the package -> Settings -> Trusted Publisher
+#     organization or username  sovereign_8h0
+#     repository                sovereignempirex-ux/svcp-ai
+#     workflow filename         publish-sdk.yml
+#     environment               (blank, unless the package uses one)
+#
+# That cannot be done from here: it is a setting on the package, and the package
+# does not exist yet. So the first release of svpc-ai-sdk is published by hand,
+# with a token and a one-time code, and everything after it is published by this
+# workflow. The name has to exist first — that is a property of npm, not a
+# limitation of this file.
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: The tag to publish, e.g. v1.0.1
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  # The one permission that matters: it lets GitHub mint the OIDC token that
+  # identifies this workflow to npm. Without it there is nothing to trust.
+  id-token: write
+
+concurrency:
+  # Two publishes of the same name at once would race, and one would be rejected
+  # in a way that is tedious to read.
+  group: npm-publish
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    name: publish
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: sdk/js
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag }}
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          registry-url: "https://registry.npmjs.org"
+
+      # The client has no dependencies, so there is nothing to install and no
+      # lockfile to keep in step. The test is the point of this step: publishing
+      # a package whose client cannot talk to a real server is worse than not
+      # publishing it.
+      - name: the tests pass
+        run: node --test
+
+      - name: refuse to publish a name that already has this version
+        run: |
+          set -euo pipefail
+          version=$(node -p "require('./package.json').version")
+          name=$(node -p "require('./package.json').name")
+          echo "publishing ${name}@${version}"
+          if npm view "${name}@${version}" version >/dev/null 2>&1; then
+            echo "::error::${name}@${version} is already on the registry."
+            echo "::error::A published version cannot be replaced, only added to."
+            echo "::error::Bump the version in package.json, commit, and tag that."
+            exit 1
+          fi
+
+      - name: publish
+        run: npm publish --provenance --access public
+        env:
+          # No token is written anywhere. npm exchanges the identity this
+          # workflow already has for permission to publish this one package.
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          NPM_CONFIG_PROVENANCE: "true"
+
+      - name: the registry agrees
+        run: |
+          set -euo pipefail
+          name=$(node -p "require('./package.json').name")
+          version=$(node -p "require('./package.json').version")
+          # Checked against the registry rather than the publish command's own
+          # output, which is a claim rather than a fact.
+          for attempt in 1 2 3 4 5; do
+            if published=$(npm view "${name}@${version}" dist.integrity 2>/dev/null); then
+              echo "on the registry: ${published}"
+              exit 0
+            fi
+            echo "not there yet, waiting (attempt ${attempt})"
+            sleep 10
+          done
+          echo "::error::${name}@${version} does not appear on the registry"
+          exit 1

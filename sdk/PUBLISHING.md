@@ -104,6 +104,42 @@ unscoped. The name in `package.json` and the names in the two READMEs have to
 agree with whichever was chosen, or the documentation sends people to a package
 that cannot exist.
 
+## After the first publish: trusted publishing
+
+`.github/workflows/publish-sdk.yml` publishes with npm's trusted publishing, which
+authenticates the workflow by its own identity — GitHub signs a token for this
+repository, file and workflow, and npm trusts the signature. No token, nothing to
+rotate, and no secret in a log.
+
+Enable it once, by hand, on the package page: **Settings → Trusted Publisher**,
+with the repository `sovereignempirex-ux/svcp-ai` and the workflow filename
+`publish-sdk.yml`. Then every release is a tag and a dispatched workflow.
+
+The first version cannot be published this way, because a trusted publisher is
+configured on a package and this package does not exist yet. That is a property of
+npm: the name has to be created by a human, with a one-time code, once.
+
+## Every way round it that does not work
+
+Recorded because each one was tried, and each refuses in a way that suggests
+something else is wrong:
+
+| Attempt | Reply |
+|---|---|
+| `npm publish` with a direct token and a one-time code | publishes |
+| `npm publish` with a direct token and no code | 403: 2FA is required |
+| `npm publish` with a staging token | 403 `E_STAGE_REQUIRED` — it cannot create a name |
+| `npm stage publish` with a staging token | 404 — the name has to exist first |
+| `npm token create` | asks for the account password |
+| `POST /-/npm/v1/tokens` with the token itself | 400 — it cannot mint tokens |
+| `GET /-/npm/v1/user` | 403 — it cannot read the account |
+
+Every one of them needs the same two things, and neither is obtainable from a
+terminal: the six-digit code from the account holder's authenticator, or the
+account password. A token is a card; the code is the other half of the combination,
+and only the account holder has it.
+
+
 ## Publishing npm from a release asset
 
 The tarball is attached to every release as `svpc-ai-sdk-<version>.tgz`, so the
