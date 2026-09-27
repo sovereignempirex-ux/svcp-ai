@@ -104,6 +104,54 @@ unscoped. The name in `package.json` and the names in the two READMEs have to
 agree with whichever was chosen, or the documentation sends people to a package
 that cannot exist.
 
+## Publishing to GitHub Packages
+
+`scripts/publish-github-packages.ps1` publishes the same client to GitHub's own
+npm registry, which authenticates with a GitHub token rather than an npm one: no
+one-time code, and nothing that depends on the npm account being usable.
+
+GitHub requires a package there to be scoped to the owner, so the name cannot be
+the bare `svpc-ai-sdk` that the manifest carries. The script does not rewrite the
+manifest — it rebuilds the package in a scratch directory under
+`@sovereignempirex-ux/svpc-ai-sdk` and publishes from there, so the working tree keeps
+naming the name it is meant to have on npm rather than one that only exists on a
+registry this machine cannot currently reach. The test file is carried into that
+copy so the tests run against what will be published, and is kept out of the
+tarball by the manifest's `files` list.
+
+```powershell
+$env:GH_TOKEN = "github_pat_..."
+./scripts/publish-github-packages.ps1 -Version 1.0.0
+```
+
+The token needs **`write:packages`**. A token used only for pushing the repository
+has `repo` and not `write:packages`, and the registry refuses it with a message
+about scopes rather than about packages:
+
+```
+403 Forbidden - PUT ... Permission
+permission_denied: The token provided does not match expected scopes.
+```
+
+`npm whoami` against the registry succeeds with such a token, because reading who
+you are is not writing a package — so a passing `whoami` says the token reached
+GitHub and says nothing about whether it can publish.
+
+A consumer needs one line in its own `.npmrc`, and the scope form is the only one
+that works:
+
+```ini
+@sovereignempirex-ux:registry=https://npm.pkg.github.com
+```
+
+Written without the `@`, the line is ignored rather than misapplied, the publish
+goes to registry.npmjs.org instead, and the reply is a 404 that never mentions the
+`.npmrc`. In a script this is worth care in both directions: `"$scope:registry=…"`
+in a PowerShell double-quoted string parses as a drive-qualified variable and
+expands to nothing, and piping an array to `Set-Content -NoNewline` writes the
+elements with no separator at all. Each failure is silent, and together they
+produce an `.npmrc` that npm reads as no credential.
+
 ## After the first publish: trusted publishing
 
 `.github/workflows/publish-sdk.yml` publishes with npm's trusted publishing, which

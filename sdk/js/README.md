@@ -12,6 +12,20 @@ the Android client is a WebView, so the same file runs there.
 
 ## Install
 
+The name is not on npm yet, so `npm install svpc-ai-sdk` answers 404 — every
+publish so far has been refused at the account's two-factor authentication.
+What does work is the tarball attached to every release: the same three files
+npm would have served, published to a place that does not need a one-time code.
+
+```bash
+VERSION=1.0.0
+curl -fLO "https://github.com/sovereignempirex-ux/svcp-ai/releases/download/v${VERSION}/svpc-ai-sdk-${VERSION}.tgz"
+npm install "./svpc-ai-sdk-${VERSION}.tgz"
+```
+
+Once the name exists on npm the shorter form is the one to use, and this
+section will say so:
+
 ```bash
 npm install svpc-ai-sdk
 ```

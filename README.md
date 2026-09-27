@@ -131,6 +131,20 @@ prints. A turn asks before it runs a command, and the client answers that from i
 own code — a browser can put up a dialog, and a program that nobody is watching
 denies by default.
 
+### Installing the JavaScript client
+
+`svpc-ai-sdk` is not on npm yet — the account's two-factor authentication has
+refused every publish, and `npm install svpc-ai-sdk` answers 404. The same three
+files are attached to every release as a tarball, and that is what installs today:
+
+```bash
+VERSION=1.0.0
+curl -fLO "https://github.com/sovereignempirex-ux/svcp-ai/releases/download/v${VERSION}/svpc-ai-sdk-${VERSION}.tgz"
+npm install "./svpc-ai-sdk-${VERSION}.tgz"
+```
+
+The Python client does install by name: `pip install svpc-ai`.
+
 
 SVPC AI looks for configuration in the following locations:
 
