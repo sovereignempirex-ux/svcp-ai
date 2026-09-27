@@ -1,54 +1,244 @@
+<div align="center">
+
+<img src="https://github.com/user-attachments/assets/9ae61ef6-70e5-4876-bc45-5bcb4e52c714" width="720" alt="SVPC AI">
+
 # SVPC AI
 
-<p align="center"><img src="https://github.com/user-attachments/assets/9ae61ef6-70e5-4876-bc45-5bcb4e52c714" width="800"></p>
+**A Go-based AI agent that runs directly in your terminal.**  
+Inspect files. Edit code. Execute tools. Maintain sessions. Drive it remotely.
 
-> **⚠️ Early Development Notice:** This project is in early development and is not yet ready for production use. Features may change, break, or be incomplete. Use at your own risk.
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+[![Go](https://img.shields.io/badge/Go-1.24%2B-00ADD8?logo=go)](https://go.dev)
+[![Release](https://img.shields.io/github/v/release/sovereignempirex-ux/svcp-ai?label=release)](https://github.com/sovereignempirex-ux/svcp-ai/releases/latest)
+[![Early Development](https://img.shields.io/badge/status-early%20development-orange)](https://github.com/sovereignempirex-ux/svcp-ai)
 
-A powerful terminal-based AI assistant for developers, providing intelligent coding assistance directly in your terminal.
+[Installation](#installation) · [Quick Start](#quick-start) · [Configuration](#configuration) · [Releases](https://github.com/sovereignempirex-ux/svcp-ai/releases)
+
+</div>
+
+---
+
+> **⚠️ Early Development**
+>
+> SVPC AI is under active development and is **not yet production-ready**. APIs, configuration structures, and CLI flags may change between releases without notice. Some features listed in this document are experimental or partially implemented — they are clearly marked. Use with that understanding.
+
+---
+
+## Table of Contents
+
+- [Overview](#overview)
+- [Why SVPC AI](#why-svpc-ai)
+- [Feature Highlights](#feature-highlights)
+- [Capability Matrix](#capability-matrix)
+- [Architecture](#architecture)
+- [Project Structure](#project-structure)
+- [Installation](#installation)
+- [Quick Start](#quick-start)
+- [Configuration](#configuration)
+- [Providers & Models](#providers--models)
+- [Agents](#agents)
+- [Tools](#tools)
+- [Permissions](#permissions)
+- [Sessions & Context](#sessions--context)
+- [MCP](#mcp-model-context-protocol)
+- [LSP](#lsp-language-server-protocol)
+- [Remote Mode](#remote-mode)
+- [SDKs](#sdks)
+- [HTTP API](#http-api)
+- [Custom Commands](#custom-commands)
+- [Non-interactive Mode](#non-interactive-mode)
+- [CLI Reference](#cli-reference)
+- [Keyboard Shortcuts](#keyboard-shortcuts)
+- [Development](#development)
+- [Build & Release](#build--release)
+- [Security](#security)
+- [Contributing](#contributing)
+- [License](#license)
+
+---
 
 ## Overview
 
-SVPC AI is a Go-based CLI application that brings AI assistance to your terminal. It provides a TUI (Terminal User Interface) for interacting with various AI models to help with coding tasks, debugging, and more.
+SVPC AI is a terminal AI agent written in Go. It runs a TUI built on [Bubble Tea](https://github.com/charmbracelet/bubbletea) and connects to multiple LLM providers — OpenAI, Anthropic, Google, Groq, GitHub Copilot, AWS Bedrock, Azure OpenAI, VertexAI, and self-hosted endpoints.
 
-## Features
+Unlike a simple chat wrapper, SVPC AI exposes a set of developer tools to the model: the agent can search and read files, write and patch code, run shell commands, query LSP diagnostics, fetch URLs, and call MCP servers — all with an explicit permission system that keeps you in control.
 
-- **Interactive TUI**: Built with [Bubble Tea](https://github.com/charmbracelet/bubbletea) for a smooth terminal experience
-- **Multiple AI Providers**: Support for OpenAI, Anthropic Claude, Google Gemini, AWS Bedrock, Groq, Azure OpenAI, and OpenRouter
-- **Session Management**: Save and manage multiple conversation sessions
-- **Tool Integration**: AI can execute commands, search files, and modify code
-- **Vim-like Editor**: Integrated editor with text input capabilities
-- **Persistent Storage**: SQLite database for storing conversations and sessions
-- **LSP Integration**: Language Server Protocol support for code intelligence
-- **File Change Tracking**: Track and visualize file changes during sessions
-- **External Editor Support**: Open your preferred editor for composing messages
-- **Named Arguments for Custom Commands**: Create powerful custom commands with multiple named placeholders
-- **Cross-platform Build**: Build for Android (APK/AAB), Windows (EXE/MSI), Linux (AppImage/deb/rpm), macOS (DMG/pkg), iOS (IPA)
-- **Cloud Integration**: AWS, GCP, Azure, Cloudflare, Vercel, Netlify, Heroku
-- **Container & Orchestration**: Docker, Kubernetes, Helm
-- **CI/CD Integration**: GitHub Actions, GitLab CI, CircleCI, Buildkite, Jenkins
-- **Image Generation**: DALL-E, Stable Diffusion, Midjourney, Flux
+Conversation state is stored in SQLite. Sessions persist across restarts. Long conversations are automatically compacted when they approach the model's context limit.
+
+The agent can also run headlessly as an HTTP server, allowing Python, JavaScript, Android, or any HTTP client to drive it remotely.
+
+---
+
+## Why SVPC AI
+
+Most terminal AI tools are thin API wrappers: you type, the model replies, nothing else happens. SVPC AI is structured differently.
+
+```
+  Your Terminal
+       │
+       ▼
+  ┌─────────────────────────────┐
+  │         SVPC AI TUI         │
+  │   (Bubble Tea / Cobra CLI)  │
+  └──────────────┬──────────────┘
+                 │
+                 ▼
+  ┌─────────────────────────────┐
+  │          Agent Core         │
+  │                             │
+  │  Context  Sessions  Memory  │
+  │  Tools    Policies  Model   │
+  └──────┬──────────┬───────────┘
+         │          │
+    ┌────┘          └────────────────┐
+    ▼                                ▼
+┌──────────┐   ┌──────────┐   ┌──────────┐
+│   LLM    │   │   LSP    │   │   MCP    │
+│Providers │   │ Servers  │   │ Servers  │
+└──────────┘   └──────────┘   └──────────┘
+ OpenAI         gopls          stdio/SSE
+ Anthropic       tsserver       external
+ Gemini         rust-analyzer   tools
+ Groq           …              …
+ Bedrock
+ Copilot
+ Azure / Vertex
+ Local
+```
+
+The agent receives your prompt, chooses tools, executes them, feeds results back into context, and continues until it has an answer or needs your input. The permission layer intercepts every destructive action before it runs.
+
+---
+
+## Feature Highlights
+
+**🤖 AI & Models**
+- Connect to OpenAI, Anthropic, Google Gemini, Groq, GitHub Copilot, AWS Bedrock, Azure OpenAI, VertexAI, and OpenAI-compatible local endpoints
+- Switch models mid-session from the model dialog
+- Configure separate models per agent role (coder, task, title)
+- GitHub Copilot support (experimental — see [Using GitHub Copilot](#using-github-copilot))
+
+**🛠️ Developer Tools**
+- Search files with glob and grep
+- Read, write, edit, and patch files
+- Execute shell commands with configurable shell
+- Query LSP diagnostics
+- Fetch URLs
+- Spawn sub-agents for parallel tasks
+
+**🧠 Context & Sessions**
+- Persistent sessions stored in SQLite
+- Auto-compact: summarize and continue when the context window approaches its limit
+- Switch between sessions with `Ctrl+A`
+- Project memory via `SVPC.md`
+
+**🔌 Extensibility**
+- MCP: connect external tool servers over stdio or SSE
+- Go library (`pkg/svpc`): embed the agent in your own program
+- Python SDK: `pip install svpc-ai`
+- JavaScript SDK: available as a release tarball
+- HTTP API: documented in [`docs/api.md`](docs/api.md)
+
+**🌐 Remote Access**
+- Run `svpc --serve` to expose the agent as an HTTP server
+- Connect from the Android client, Python, JavaScript, or any HTTP client
+- Token-based authentication
+
+**💻 Terminal UX**
+- Vim-like keyboard navigation
+- External editor support (`Ctrl+E`)
+- Named custom commands with argument placeholders
+- Non-interactive mode for scripting (`-p`)
+
+---
+
+## Capability Matrix
+
+| Capability | Status | Notes |
+|---|---|---|
+| Interactive TUI | ✅ | Bubble Tea, keyboard-driven |
+| OpenAI provider | ✅ | GPT-4.1, GPT-4o, O-series |
+| Anthropic provider | ✅ | Claude 3–4 families |
+| Google Gemini provider | ✅ | 2.0 / 2.5 families |
+| Groq provider | ✅ | Llama 4, Deepseek, QWEN |
+| GitHub Copilot provider | 🧪 | Experimental |
+| AWS Bedrock provider | ✅ | Claude 3.7 Sonnet |
+| Azure OpenAI provider | ✅ | GPT-4.1 / O-series |
+| Google VertexAI provider | ✅ | Gemini 2.5 / 2.5 Flash |
+| Self-hosted (OpenAI-compatible) | ✅ | Via `LOCAL_ENDPOINT` |
+| File tools (glob/grep/ls/view/write/edit/patch) | ✅ | Core toolset |
+| Shell execution (bash) | ✅ | Configurable shell |
+| URL fetch | ✅ | |
+| LSP diagnostics | ✅ | Exposed to agent via `diagnostics` tool |
+| LSP completions / hover / definition | ⚠️ | Protocol supported; not exposed to agent |
+| MCP (stdio) | ✅ | |
+| MCP (SSE) | ✅ | |
+| Sessions & persistence (SQLite) | ✅ | |
+| Auto-compact | ✅ | Default enabled |
+| Custom commands | ✅ | Named argument placeholders |
+| Non-interactive mode | ✅ | `-p` flag |
+| Remote HTTP server | ✅ | `--serve` flag |
+| Android client | 🧪 | Remote client only, not a local agent |
+| Go SDK (`pkg/svpc`) | ✅ | In-process embedding |
+| Python SDK | ✅ | `pip install svpc-ai`; HTTP client |
+| JavaScript SDK | ⚠️ | Not on npm; install from release tarball |
+| Build tools (Android/Windows/macOS/iOS) | 🧪 | Experimental |
+| Cloud tools (AWS/GCP/Azure/etc.) | 🧪 | Experimental |
+| Image generation tools | 🧪 | Experimental |
+| CI/CD tools | 🧪 | Experimental |
+| Sourcegraph tool | 🧪 | Experimental |
+
+> **Key:** ✅ Implemented · 🧪 Experimental · ⚠️ Partial · 🚧 Planned
+
+---
+
+## Project Structure
+
+```
+svcp-ai/
+├── cmd/                    # CLI entry point (Cobra)
+├── internal/
+│   ├── app/                # Core application services
+│   ├── config/             # Configuration loading & validation
+│   ├── db/                 # SQLite storage & migrations
+│   ├── llm/                # LLM provider adapters & tool definitions
+│   ├── lsp/                # Language Server Protocol client
+│   ├── logging/            # Logging infrastructure
+│   ├── message/            # Message handling & formatting
+│   ├── session/            # Session lifecycle management
+│   └── tui/                # Terminal UI components & layouts
+├── pkg/
+│   └── svpc/               # Go library for embedding the agent
+├── sdk/
+│   ├── python/             # Python HTTP client SDK
+│   └── js/                 # JavaScript HTTP client SDK
+├── docs/
+│   └── api.md              # HTTP API reference
+├── install                 # Shell install script
+├── go.mod
+└── LICENSE
+```
+
+---
 
 ## Installation
 
-### Windows
+### Linux & macOS
 
-Download `SVPC.AI.exe` from the [latest release](https://github.com/sovereignempirex-ux/svcp-ai/releases/latest) and run it.
-
-### Linux and macOS
+The install script places the binary at `~/.svpc/bin/svpc` and requires no root.
 
 ```bash
-# Install the latest release
+# Latest release
 curl -fsSL https://raw.githubusercontent.com/sovereignempirex-ux/svcp-ai/refs/heads/main/install | bash
 
-# Install a specific version
+# Specific version
 curl -fsSL https://raw.githubusercontent.com/sovereignempirex-ux/svcp-ai/refs/heads/main/install | VERSION=1.0.0 bash
 ```
 
-The script installs to `~/.svpc/bin` and needs no root. It prints the one line to add
-to your shell, or adds it for you.
+After installation, add `~/.svpc/bin` to your `PATH` as the script instructs.
 
 <details>
-<summary>Building from the release archives by hand</summary>
+<summary>Manual install from release archive</summary>
 
 ```bash
 VERSION=1.0.0
@@ -60,20 +250,17 @@ tar -xzf "svpc-${OS}-${ARCH}.tar.gz"
 install svpc ~/.svpc/bin/
 ```
 
-Each archive holds one binary, `LICENSE` and `README.md`, and the archive names are
-the ones the script asks for. `checksums.txt` in the same release lists a SHA-256 for
-every asset; `sha256sum -c checksums.txt` verifies them.
+Verify the download against `checksums.txt` in the same release:
+
+```bash
+sha256sum -c checksums.txt
+```
 
 </details>
 
-<details>
-<summary>Package managers</summary>
+### Windows
 
-There is no Homebrew tap or AUR package for this project. The release archives and
-the install script above are the supported routes; if you maintain a tap and would
-like it listed here, open an issue.
-
-</details>
+Download `SVPC.AI.exe` from the [latest release](https://github.com/sovereignempirex-ux/svcp-ai/releases/latest) and run it.
 
 ### Using Go
 
@@ -81,134 +268,56 @@ like it listed here, open an issue.
 go install github.com/sovereignempirex-ux/svcp/cmd@latest
 ```
 
-### Android
+Requires Go 1.24 or higher.
 
-`svpc-ai.apk` from the same release is a client: it drives the agent running on your
-own machine over the network, rather than running a model on the phone. Start the
-agent with `svpc --serve 0.0.0.0` and enter the address and token it prints.
-
-### Using SVPC AI as a library
-
-The agent is a Go package, and it is a client over an HTTP contract. Whichever you
-want, the working directory, the provider and the sessions are the same files the
-command line tool uses.
-
-| | |
-|---|---|
-| [`pkg/svpc`](pkg/svpc) | Go. Embed the agent directly. `go get github.com/sovereignempirex-ux/svcp/pkg/svpc` |
-| [`sdk/python`](sdk/python) | Python, standard library only. `pip install svpc-ai` |
-| [`sdk/js`](sdk/js) | JavaScript, no dependencies. Works in a browser, Deno, Bun and Node |
-| [`docs/api.md`](docs/api.md) | The HTTP contract, for a language nobody has written a client for yet |
-
-```go
-agent, _ := svpc.New(ctx, svpc.Options{WorkingDir: "."})
-defer agent.Close()
-
-answer, session, _ := agent.Answer(ctx, "", "what does this repository do?")
-fmt.Println(answer)
-```
-
-```python
-from svpc import Client
-
-with Client("192.168.1.20", 8080, token) as agent:
-    agent.connect()                                   # check the API version
-    print(agent.ask_once("what changed here?")["text"])
-```
-
-```js
-import { Client } from 'svpc-ai-sdk';
-
-const agent = new Client({ host: '192.168.1.20', port: 8080, token });
-await agent.version();
-const { text } = await agent.askOnce('what changed here?');
-```
-
-The Go library runs the agent in your process. The two SDKs run it somewhere else
-and speak to it, which is what makes a phone, a browser or a service possible: start
-the agent with `svpc --serve 0.0.0.0` and give the client the address and token it
-prints. A turn asks before it runs a command, and the client answers that from its
-own code — a browser can put up a dialog, and a program that nobody is watching
-denies by default.
-
-### Installing the JavaScript client
-
-`svpc-ai-sdk` is not on npm yet — the account's two-factor authentication has
-refused every publish, and `npm install svpc-ai-sdk` answers 404. The same three
-files are attached to every release as a tarball, and that is what installs today:
+### Build from Source
 
 ```bash
-VERSION=1.0.0
-curl -fLO "https://github.com/sovereignempirex-ux/svcp-ai/releases/download/v${VERSION}/svpc-ai-sdk-${VERSION}.tgz"
-npm install "./svpc-ai-sdk-${VERSION}.tgz"
+git clone https://github.com/sovereignempirex-ux/svcp-ai.git
+cd svcp-ai
+go build -o svpc ./cmd
+./svpc
 ```
 
-The Python client does install by name: `pip install svpc-ai`.
+### Android Client
 
+The Android APK (`svpc-ai.apk`) in each release is a **remote client** — it does not run a model on the device. It connects to an agent running on your machine. See [Remote Mode](#remote-mode) for setup.
 
-SVPC AI looks for configuration in the following locations:
+---
 
-- `$HOME/.svpc.json`
-- `$XDG_CONFIG_HOME/svpc/.svpc.json`
-- `./.svpc.json` (local directory)
+## Quick Start
 
-### Auto Compact Feature
-
-SVPC AI includes an auto compact feature that automatically summarizes your conversation when it approaches the model's context window limit. When enabled (default setting), this feature:
-
-- Monitors token usage during your conversation
-- Automatically triggers summarization when usage reaches 95% of the model's context window
-- Creates a new session with the summary, allowing you to continue your work without losing context
-- Helps prevent "out of context" errors that can occur with long conversations
-
-You can enable or disable this feature in your configuration file:
-
-```json
-{
-  "autoCompact": true // default is true
-}
+```bash
+# Launch SVPC AI
+svpc
 ```
 
-### Environment Variables
+On first run:
 
-You can configure SVPC AI using environment variables:
+1. Open the model dialog with `Ctrl+O`
+2. Set your API key for the provider you want (see [Environment Variables](#environment-variables))
+3. Select a model and press `Enter`
+4. Type your first message and press `Ctrl+S` or `Enter` to send
+5. When the agent requests permission to run a tool, press `a` to allow or `d` to deny
 
-| Environment Variable       | Purpose                                                                          |
-| -------------------------- | -------------------------------------------------------------------------------- |
-| `ANTHROPIC_API_KEY`        | For Claude models                                                                |
-| `OPENAI_API_KEY`           | For OpenAI models                                                                |
-| `GEMINI_API_KEY`           | For Google Gemini models                                                         |
-| `GITHUB_TOKEN`             | For Github Copilot models                                                        |
-| `VERTEXAI_PROJECT`         | For Google Cloud VertexAI (Gemini)                                               |
-| `VERTEXAI_LOCATION`        | For Google Cloud VertexAI (Gemini)                                               |
-| `GROQ_API_KEY`             | For Groq models                                                                  |
-| `AWS_ACCESS_KEY_ID`        | For AWS Bedrock (Claude)                                                         |
-| `AWS_SECRET_ACCESS_KEY`    | For AWS Bedrock (Claude)                                                         |
-| `AWS_REGION`               | For AWS Bedrock (Claude)                                                         |
-| `AZURE_OPENAI_ENDPOINT`    | For Azure OpenAI models                                                          |
-| `AZURE_OPENAI_API_KEY`     | For Azure OpenAI models (optional when using Entra ID)                           |
-| `AZURE_OPENAI_API_VERSION` | For Azure OpenAI models                                                          |
-| `LOCAL_ENDPOINT`           | For self-hosted models                                                           |
-| `SHELL`                    | Default shell to use (if not specified in config)                                |
+For a one-shot answer without the TUI:
 
-### Shell Configuration
-
-SVPC AI allows you to configure the shell used by the bash tool. By default, it uses the shell specified in the `SHELL` environment variable, or falls back to `/bin/bash` if not set.
-
-You can override this in your configuration file:
-
-```json
-{
-  "shell": {
-    "path": "/bin/zsh",
-    "args": ["-l"]
-  }
-}
+```bash
+export ANTHROPIC_API_KEY=sk-ant-...
+svpc -p "What does this repository do?"
 ```
 
-This is useful if you want to use a different shell than your default system shell, or if you need to pass specific arguments to the shell.
+---
 
-### Configuration File Structure
+## Configuration
+
+SVPC AI loads configuration from the first file it finds in this order:
+
+1. `./.svpc.json` (project-local)
+2. `$XDG_CONFIG_HOME/svpc/.svpc.json`
+3. `$HOME/.svpc.json`
+
+### Full Configuration Reference
 
 ```json
 {
@@ -217,23 +326,23 @@ This is useful if you want to use a different shell than your default system she
   },
   "providers": {
     "openai": {
-      "apiKey": "your-api-key",
+      "apiKey": "",
       "disabled": false,
-      "baseUrl": "https://your-gateway.example/v1"
+      "baseUrl": "https://api.openai.com/v1"
     },
     "anthropic": {
-      "apiKey": "your-api-key",
+      "apiKey": "",
       "disabled": false
     },
     "copilot": {
       "disabled": false
     },
     "groq": {
-      "apiKey": "your-api-key",
+      "apiKey": "",
       "disabled": false
     },
     "openrouter": {
-      "apiKey": "your-api-key",
+      "apiKey": "",
       "disabled": false
     }
   },
@@ -256,11 +365,11 @@ This is useful if you want to use a different shell than your default system she
     "args": ["-l"]
   },
   "mcpServers": {
-    "example": {
+    "my-server": {
       "type": "stdio",
       "command": "path/to/mcp-server",
-      "env": [],
-      "args": []
+      "args": [],
+      "env": []
     }
   },
   "lsp": {
@@ -269,417 +378,348 @@ This is useful if you want to use a different shell than your default system she
       "command": "gopls"
     }
   },
+  "autoCompact": true,
   "debug": false,
-  "debugLSP": false,
-  "autoCompact": true
+  "debugLSP": false
 }
 ```
 
-## Supported AI Models
+### Environment Variables
 
-SVPC AI supports a variety of AI models from different providers:
+API keys can be set via environment variable instead of the config file. Environment variables take precedence.
+
+| Variable | Provider |
+|---|---|
+| `ANTHROPIC_API_KEY` | Anthropic Claude |
+| `OPENAI_API_KEY` | OpenAI |
+| `GEMINI_API_KEY` | Google Gemini |
+| `GITHUB_TOKEN` | GitHub Copilot |
+| `GROQ_API_KEY` | Groq |
+| `AWS_ACCESS_KEY_ID` | AWS Bedrock |
+| `AWS_SECRET_ACCESS_KEY` | AWS Bedrock |
+| `AWS_REGION` | AWS Bedrock |
+| `AZURE_OPENAI_ENDPOINT` | Azure OpenAI |
+| `AZURE_OPENAI_API_KEY` | Azure OpenAI |
+| `AZURE_OPENAI_API_VERSION` | Azure OpenAI |
+| `VERTEXAI_PROJECT` | Google VertexAI |
+| `VERTEXAI_LOCATION` | Google VertexAI |
+| `LOCAL_ENDPOINT` | Self-hosted (OpenAI-compatible) |
+| `SHELL` | Shell used by the bash tool |
+
+### Shell Configuration
+
+By default the bash tool uses the shell in `$SHELL`, falling back to `/bin/bash`. Override it:
+
+```json
+{
+  "shell": {
+    "path": "/bin/zsh",
+    "args": ["-l"]
+  }
+}
+```
+
+### Auto Compact
+
+When `autoCompact` is `true` (the default), SVPC AI monitors token usage and automatically summarizes the conversation at 95% of the model's context window. The summary becomes the start of a new session, so work continues without losing important context.
+
+Disable it if you prefer to manage context manually:
+
+```json
+{
+  "autoCompact": false
+}
+```
+
+---
+
+## Providers & Models
 
 ### OpenAI
-- GPT-4.1 family (gpt-4.1, gpt-4.1-mini, gpt-4.1-nano)
-- GPT-4.5 Preview
-- GPT-4o family (gpt-4o, gpt-4o-mini)
-- O1 family (o1, o1-pro, o1-mini)
-- O3 family (o3, o3-mini)
-- O4 Mini
+
+| Model family | Examples |
+|---|---|
+| GPT-4.1 | `gpt-4.1`, `gpt-4.1-mini`, `gpt-4.1-nano` |
+| GPT-4.5 | `gpt-4.5-preview` |
+| GPT-4o | `gpt-4o`, `gpt-4o-mini` |
+| O1 | `o1`, `o1-pro`, `o1-mini` |
+| O3 | `o3`, `o3-mini` |
+| O4 | `o4-mini` |
 
 ### Anthropic
-- Claude 4 Sonnet
-- Claude 4 Opus
-- Claude 3.5 Sonnet
-- Claude 3.5 Haiku
-- Claude 3.7 Sonnet
-- Claude 3 Haiku
-- Claude 3 Opus
 
-### GitHub Copilot
-- GPT-3.5 Turbo
-- GPT-4
-- GPT-4o
-- GPT-4o Mini
-- GPT-4.1
-- Claude 3.5 Sonnet
-- Claude 3.7 Sonnet
-- Claude 3.7 Sonnet Thinking
-- Claude Sonnet 4
-- O1
-- O3 Mini
-- O4 Mini
-- Gemini 2.0 Flash
-- Gemini 2.5 Pro
+| Model |
+|---|
+| `claude-4-sonnet` |
+| `claude-4-opus` |
+| `claude-3-7-sonnet` |
+| `claude-3-5-sonnet` |
+| `claude-3-5-haiku` |
+| `claude-3-haiku` |
+| `claude-3-opus` |
 
-### Google
-- Gemini 2.5
-- Gemini 2.5 Flash
-- Gemini 2.0 Flash
-- Gemini 2.0 Flash Lite
+### Google Gemini
+
+| Model |
+|---|
+| `gemini-2.5`, `gemini-2.5-flash` |
+| `gemini-2.0-flash`, `gemini-2.0-flash-lite` |
+
+### GitHub Copilot _(experimental)_
+
+Copilot exposes a mix of OpenAI and Anthropic models including `gpt-4.1`, `claude-3.7-sonnet`, `claude-sonnet-4`, `gemini-2.5-pro`, `o4-mini`, and others. See [Using GitHub Copilot](#using-github-copilot).
 
 ### AWS Bedrock
-- Claude 3.7 Sonnet
+
+| Model |
+|---|
+| `claude-3-7-sonnet` (via Bedrock) |
 
 ### Groq
-- Llama 4 Maverick (17b-128e-instruct)
-- Llama 4 Scout (17b-16e-instruct)
-- QWEN QWQ-32b
-- Deepseek R1 distill Llama 70b
-- Llama 3.3 70b Versatile
+
+| Model |
+|---|
+| `llama-4-maverick-17b-128e-instruct` |
+| `llama-4-scout-17b-16e-instruct` |
+| `qwen-qwq-32b` |
+| `deepseek-r1-distill-llama-70b` |
+| `llama-3.3-70b-versatile` |
 
 ### Azure OpenAI
-- GPT-4.1 family (gpt-4.1, gpt-4.1-mini, gpt-4.1-nano)
-- GPT-4.5 Preview
-- GPT-4o family (gpt-4o, gpt-4o-mini)
-- O1 family (o1, o1-mini)
-- O3 family (o3, o3-mini)
-- O4 Mini
 
-### Google Cloud VertexAI
-- Gemini 2.5
-- Gemini 2.5 Flash
+Mirrors the OpenAI model list. Requires `AZURE_OPENAI_ENDPOINT` and `AZURE_OPENAI_API_VERSION`.
 
-## Usage
+### Google VertexAI
+
+| Model |
+|---|
+| `gemini-2.5`, `gemini-2.5-flash` |
+
+### Self-hosted (OpenAI-compatible)
 
 ```bash
-# Start SVPC AI
-svpc
-
-# Start with debug logging
-svpc -d
-
-# Start with a specific working directory
-svpc -c /path/to/project
+export LOCAL_ENDPOINT=http://localhost:1235/v1
 ```
 
-## Non-interactive Prompt Mode
+Reference a local model in agent config using the `local.` prefix:
 
-You can run SVPC AI in non-interactive mode by passing a prompt directly as a command-line argument. This is useful for scripting, automation, or when you want a quick answer without launching the full TUI.
-
-```bash
-# Run a single prompt and print the AI's response to the terminal
-svpc -p "Explain the use of context in Go"
-
-# Get response in JSON format
-svpc -p "Explain the use of context in Go" -f json
-
-# Run without showing the spinner (useful for scripts)
-svpc -p "Explain the use of context in Go" -q
+```json
+{
+  "agents": {
+    "coder": {
+      "model": "local.granite-3.3-2b-instruct@q8_0"
+    }
+  }
+}
 ```
 
-In this mode, SVPC AI will process your prompt, print the result to standard output, and then exit. All permissions are auto-approved for the session.
+### Using GitHub Copilot
 
-By default, a spinner animation is displayed while the model is processing your query. You can disable this spinner with the `-q` or `--quiet` flag, which is particularly useful when running SVPC AI from scripts or automated workflows.
+> **Experimental** — token acquisition depends on a third-party tool.
 
-### Output Formats
+Requirements: Copilot Chat enabled in [GitHub settings](https://github.com/settings/copilot), plus one of:
 
-SVPC AI supports the following output formats in non-interactive mode:
+- VSCode GitHub Copilot Chat extension
+- GitHub `gh` CLI
+- Neovim `copilot.vim` / `copilot.lua`
+- A GitHub token with Copilot permissions
 
-| Format | Description                     |
-| ------ | ------------------------------- |
-| `text` | Plain text output (default)     |
-| `json` | Output wrapped in a JSON object |
+SVPC AI reads the token from:
 
-The output format is implemented as a strongly-typed `OutputFormat` in the codebase, ensuring type safety and validation when processing outputs.
+- `~/.config/github-copilot/hosts.json` or `apps.json`
+- `$XDG_CONFIG_HOME/github-copilot/hosts.json` or `apps.json`
+- `$GITHUB_TOKEN` environment variable
+- `providers.copilot.apiKey` in the config file
 
-## Command-line Flags
+---
 
-| Flag              | Short | Description                                         |
-| ----------------- | ----- | --------------------------------------------------- |
-| `--help`          | `-h`  | Display help information                            |
-| `--debug`         | `-d`  | Enable debug mode                                   |
-| `--cwd`           | `-c`  | Set current working directory                       |
-| `--prompt`        | `-p`  | Run a single prompt in non-interactive mode         |
-| `--output-format` | `-f`  | Output format for non-interactive mode (text, json) |
-| `--quiet`         | `-q`  | Hide spinner in non-interactive mode                |
+## Agents
 
-## Keyboard Shortcuts
+SVPC AI uses three named agent roles internally, each independently configurable:
 
-### Global Shortcuts
+| Role | Purpose | Config key |
+|---|---|---|
+| `coder` | Handles the main conversation and tool use | `agents.coder` |
+| `task` | Runs sub-tasks and parallel work | `agents.task` |
+| `title` | Generates session titles | `agents.title` |
 
-| Shortcut | Action                                                  |
-| -------- | ------------------------------------------------------- |
-| `Ctrl+C` | Quit application                                        |
-| `Ctrl+?` | Toggle help dialog                                      |
-| `?`      | Toggle help dialog (when not in editing mode)           |
-| `Ctrl+L` | View logs                                               |
-| `Ctrl+A` | Switch session                                          |
-| `Ctrl+K` | Command dialog                                          |
-| `Ctrl+O` | Toggle model selection dialog                           |
-| `Esc`    | Close current overlay/dialog or return to previous mode |
+Each role accepts:
 
-### Chat Page Shortcuts
-
-| Shortcut | Action                                  |
-| -------- | --------------------------------------- |
-| `Ctrl+N` | Create new session                      |
-| `Ctrl+X` | Cancel current operation/generation     |
-| `i`      | Focus editor (when not in writing mode) |
-| `Esc`    | Exit writing mode and focus messages    |
-
-### Editor Shortcuts
-
-| Shortcut            | Action                                    |
-| ------------------- | ----------------------------------------- |
-| `Ctrl+S`            | Send message (when editor is focused)     |
-| `Enter` or `Ctrl+S` | Send message (when editor is not focused) |
-| `Ctrl+E`            | Open external editor                      |
-| `Esc`               | Blur editor and focus messages            |
-
-### Session Dialog Shortcuts
-
-| Shortcut   | Action           |
-| ---------- | ---------------- |
-| `↑` or `k` | Previous session |
-| `↓` or `j` | Next session     |
-| `Enter`    | Select session   |
-| `Esc`      | Close dialog     |
-
-### Model Dialog Shortcuts
-
-| Shortcut   | Action            |
-| ---------- | ----------------- |
-| `↑` or `k` | Move up           |
-| `↓` or `j` | Move down         |
-| `←` or `h` | Previous provider |
-| `→` or `l` | Next provider     |
-| `Esc`      | Close dialog      |
-
-### Permission Dialog Shortcuts
-
-| Shortcut                | Action                       |
-| ----------------------- | ---------------------------- |
-| `←` or `left`           | Switch options left          |
-| `→` or `right` or `tab` | Switch options right         |
-| `Enter` or `space`      | Confirm selection            |
-| `a`                     | Allow permission             |
-| `A`                     | Allow permission for session |
-| `d`                     | Deny permission              |
-
-### Logs Page Shortcuts
-
-| Shortcut           | Action              |
-| ------------------ | ------------------- |
-| `Backspace` or `q` | Return to chat page |
-
-## AI Assistant Tools
-
-SVPC AI's AI assistant has access to various tools to help with coding tasks:
-
-### File and Code Tools
-
-| Tool          | Description                 | Parameters                                                                               |
-| ------------- | --------------------------- | ---------------------------------------------------------------------------------------- |
-| `glob`        | Find files by pattern       | `pattern` (required), `path` (optional)                                                  |
-| `grep`        | Search file contents        | `pattern` (required), `path` (optional), `include` (optional), `literal_text` (optional) |
-| `ls`          | List directory contents     | `path` (optional), `ignore` (optional array of patterns)                                 |
-| `view`        | View file contents          | `file_path` (required), `offset` (optional), `limit` (optional)                          |
-| `write`       | Write to files              | `file_path` (required), `content` (required)                                             |
-| `edit`        | Edit files                  | Various parameters for file editing                                                      |
-| `patch`       | Apply patches to files      | `file_path` (required), `diff` (required)                                                |
-| `diagnostics` | Get diagnostics information | `file_path` (optional)                                                                   |
-
-### Build & Deploy Tools
-
-| Tool          | Description                            | Parameters                                                                                |
-| ------------- | -------------------------------------- | ----------------------------------------------------------------------------------------- |
-| `build`       | Cross-platform build (Android, Windows, Linux, macOS, iOS) | `platform`, `action`, `config`, `version`, `arch`, `target` |
-| `sign`        | Code signing (Windows, macOS, iOS, Android) | `platform`, `file`, `certificate`, `password`, `provisioning_profile`, `keystore` |
-| `notarize`    | Apple notarization for macOS/iOS       | `file`, `apple_id`, `password`, `team_id`, `bundle_id` |
-| `package`     | Create distributable packages          | `platform`, `format`, `input`, `output`, `config` |
-
-### Cloud & Infrastructure Tools
-
-| Tool          | Description                            | Parameters                                                                                |
-| ------------- | -------------------------------------- | ----------------------------------------------------------------------------------------- |
-| `cloud`       | Cloud providers (AWS, GCP, Azure, Cloudflare, Vercel, Netlify, Heroku) | `provider`, `action`, `region`, `params` |
-| `docker`      | Docker operations (build, run, push, compose) | `action`, `image`, `dockerfile`, `context`, `tag`, `ports`, `env`, `volumes` |
-| `k8s`         | Kubernetes operations (apply, logs, scale, helm) | `action`, `resource`, `name`, `namespace`, `file`, `replicas`, `chart`, `release` |
-| `cicd`        | CI/CD platforms (GitHub Actions, GitLab CI, CircleCI, etc.) | `provider`, `action`, `project`, `params` |
-
-### Image Generation Tools
-
-| Tool                | Description                                    | Parameters                                         |
-| ------------------- | ---------------------------------------------- | -------------------------------------------------- |
-| `image_gen`         | Generate images (DALL-E, Stable Diffusion, Midjourney, Flux) | `provider`, `prompt`, `model`, `size`, `quality`, `style`, `n`, `seed`, `negative_prompt`, `aspect_ratio` |
-| `image_edit`        | Edit images (inpainting, outpainting)          | `provider`, `prompt`, `image_path`, `mask_path`, `model`, `size`, `n` |
-| `image_variation`   | Create image variations                        | `provider`, `image_path`, `model`, `size`, `n` |
-
-### Hosting & Repository Tools
-
-| Tool          | Description                            | Parameters                                                                                |
-| ------------- | -------------------------------------- | ----------------------------------------------------------------------------------------- |
-| `hosting`     | GitHub/GitLab/Bitbucket integration (PRs, issues, etc.) | `provider`, `action`, `owner`, `repo`, `title`, `body`, `head`, `base`, `number`, `state`, `labels`, `assignees` |
-| `github_workflow` | Create GitHub Actions workflows       | `owner`, `repo`, `name`, `on`, `jobs` |
-| `gh`          | Run GitHub CLI commands                | `command`, `args`, `workdir` |
-| `glab`        | Run GitLab CLI commands                | `command`, `args`, `workdir` |
-| `webhook`     | Manage webhooks on hosting platforms   | `provider`, `action`, `owner`, `repo`, `url`, `events`, `secret`, `id` |
-
-### Other Tools
-
-| Tool          | Description                            | Parameters                                                                                |
-| ------------- | -------------------------------------- | ----------------------------------------------------------------------------------------- |
-| `bash`        | Execute shell commands                 | `command` (required), `timeout` (optional)                                                |
-| `fetch`       | Fetch data from URLs                   | `url` (required), `format` (required), `timeout` (optional)                               |
-| `sourcegraph` | Search code across public repositories | `query` (required), `count` (optional), `context_window` (optional), `timeout` (optional) |
-| `agent`       | Run sub-tasks with the AI agent        | `prompt` (required)                                                                       |
-
-## Architecture
-
-SVPC AI is built with a modular architecture:
-
-- **cmd**: Command-line interface using Cobra
-- **internal/app**: Core application services
-- **internal/config**: Configuration management
-- **internal/db**: Database operations and migrations
-- **internal/llm**: LLM providers and tools integration
-- **internal/tui**: Terminal UI components and layouts
-- **internal/logging**: Logging infrastructure
-- **internal/message**: Message handling
-- **internal/session**: Session management
-- **internal/lsp**: Language Server Protocol integration
-
-## Custom Commands
-
-SVPC AI supports custom commands that can be created by users to quickly send predefined prompts to the AI assistant.
-
-### Creating Custom Commands
-
-Custom commands are predefined prompts stored as Markdown files in one of three locations:
-
-1. **User Commands** (prefixed with `user:`):
-
-    ```
-    $XDG_CONFIG_HOME/svpc/commands/
-    ```
-
-    (typically `~/.config/svpc/commands/` on Linux/macOS)
-
-    or
-
-    ```
-    $HOME/.svpc/commands/
-    ```
-
-2. **Project Commands** (prefixed with `project:`):
-
-    ```
-    <PROJECT DIR>/.svpc/commands/
-    ```
-
-Each `.md` file in these directories becomes a custom command. The file name (without extension) becomes the command ID.
-
-For example, creating a file at `~/.config/svpc/commands/prime-context.md` with content:
-
-```markdown
-RUN git ls-files
-READ README.md
+```json
+{
+  "model": "claude-3.7-sonnet",
+  "maxTokens": 5000,
+  "reasoningEffort": "high"
+}
 ```
 
-This creates a command called `user:prime-context`.
+A request flows as follows:
 
-### Command Arguments
+1. Your message enters the `coder` agent
+2. The agent builds a context from session history, project memory (`SVPC.md`), and any active LSP diagnostics
+3. The model responds — either with a final answer, or with one or more tool calls
+4. Each tool call goes through the permission system before execution
+5. Tool results feed back into context
+6. The loop continues until the model produces a final response
 
-SVPC AI supports named arguments in custom commands using placeholders in the format `$NAME` (where NAME consists of uppercase letters, numbers, and underscores, and must start with a letter).
+---
 
-For example:
+## Tools
 
-```markdown
-# Fetch Context for Issue $ISSUE_NUMBER
+Tools are the actions the agent can take. Every tool call is intercepted by the permission system before execution.
 
-RUN gh issue view $ISSUE_NUMBER --json title,body,comments
-RUN git grep --author="$AUTHOR_NAME" -n .
-RUN grep -R "$SEARCH_PATTERN" $DIRECTORY
-```
+### File & Code
 
-When you run a command with arguments, SVPC AI will prompt you to enter values for each unique placeholder. Named arguments provide several benefits:
+| Tool | Description | Key parameters |
+|---|---|---|
+| `glob` | Find files by pattern | `pattern` (required), `path` |
+| `grep` | Search file contents | `pattern` (required), `path`, `include`, `literal_text` |
+| `ls` | List directory contents | `path`, `ignore` |
+| `view` | Read file contents | `file_path` (required), `offset`, `limit` |
+| `write` | Write a file | `file_path` (required), `content` (required) |
+| `edit` | Edit a file in place | file path and edit parameters |
+| `patch` | Apply a unified diff | `file_path` (required), `diff` (required) |
 
-- Clear identification of what each argument represents
-- Ability to use the same argument multiple times
-- Better organization for commands with multiple inputs
+### Shell & Network
 
-### Organizing Commands
+| Tool | Description | Key parameters |
+|---|---|---|
+| `bash` | Execute a shell command | `command` (required), `timeout` |
+| `fetch` | Fetch a URL | `url` (required), `format` (required), `timeout` |
 
-You can organize commands in subdirectories:
+### Intelligence
 
-```
-~/.config/svpc/commands/git/commit.md
-```
+| Tool | Description | Key parameters |
+|---|---|---|
+| `diagnostics` | Get LSP diagnostics for a file | `file_path` |
+| `agent` | Spawn a sub-agent for a parallel task | `prompt` (required) |
 
-This creates a command with ID `user:git:commit`.
+### Experimental Tools
 
-### Using Custom Commands
+The following tools are defined but are **experimental** — their stability and completeness should not be assumed:
 
-1. Press `Ctrl+K` to open the command dialog
-2. Select your custom command (prefixed with either `user:` or `project:`)
-3. Press Enter to execute the command
+| Category | Tool | Notes |
+|---|---|---|
+| Build | `build`, `sign`, `notarize`, `package` | Cross-platform build targets |
+| Cloud | `cloud`, `docker`, `k8s`, `cicd` | Cloud/container/CI operations |
+| Image | `image_gen`, `image_edit`, `image_variation` | Requires provider API key |
+| Hosting | `hosting`, `github_workflow`, `gh`, `glab`, `webhook` | Git platform integrations |
+| Search | `sourcegraph` | Public code search |
 
-The content of the command file will be sent as a message to the AI assistant.
+---
 
-### Built-in Commands
+## Permissions
 
-SVPC AI includes several built-in commands:
+Before the agent executes any tool, it presents a permission prompt. This applies to every tool — shell commands, file writes, network requests, and MCP calls.
 
-| Command            | Description                                                                                         |
-| ------------------ | --------------------------------------------------------------------------------------------------- |
-| Initialize Project | Creates or updates the SVPC.md memory file with project-specific information                        |
-| Compact Session    | Manually triggers the summarization of the current session, creating a new session with the summary |
+### Options
+
+| Choice | Keyboard | Meaning |
+|---|---|---|
+| Allow | `a` | Allow this specific invocation |
+| Allow for session | `A` | Allow this tool for the rest of the session without further prompts |
+| Deny | `d` | Deny this invocation; the agent receives an error |
+
+### Non-interactive mode
+
+When running with `-p`, all permissions are **auto-approved**. Do not run untrusted prompts in non-interactive mode against a sensitive codebase.
+
+### MCP tools
+
+MCP tools follow the same permission model as built-in tools. A tool discovered from an MCP server requires approval before its first use.
+
+---
+
+## Sessions & Context
+
+Sessions are the primary unit of conversation state. Each session stores:
+
+- Full message history
+- Tool call history
+- File change tracking
+- Auto-generated title
+
+### Managing sessions
+
+| Action | How |
+|---|---|
+| New session | `Ctrl+N` in the TUI |
+| Switch session | `Ctrl+A` → select from list → `Enter` |
+| Session title | Auto-generated by the `title` agent after the first exchange |
+
+Sessions persist in `.svpc/` (or the configured `data.directory`) using SQLite.
+
+### Auto Compact
+
+When `autoCompact: true`, the agent monitors token usage. At 95% of the model's context limit, it:
+
+1. Asks the model to summarize the conversation
+2. Creates a new session containing the summary
+3. Continues from the new session transparently
+
+The original session is preserved. You can switch back to it at any time.
+
+### Project Memory
+
+Create an `SVPC.md` file in your project root. SVPC AI reads it at the start of each session and uses it as persistent project context — architecture notes, conventions, important file paths, and anything else you want the agent to always know.
+
+Generate or update it with the built-in **Initialize Project** command (`Ctrl+K` → `Initialize Project`).
+
+---
 
 ## MCP (Model Context Protocol)
 
-SVPC AI implements the Model Context Protocol (MCP) to extend its capabilities through external tools. MCP provides a standardized way for the AI assistant to interact with external services and tools.
+MCP lets you connect external tool servers to SVPC AI. The agent discovers tools from connected servers and treats them identically to built-in tools, including the same permission prompts.
 
-### MCP Features
+### Connection types
 
-- **External Tool Integration**: Connect to external tools and services via a standardized protocol
-- **Tool Discovery**: Automatically discover available tools from MCP servers
-- **Multiple Connection Types**:
-  - **Stdio**: Communicate with tools via standard input/output
-  - **SSE**: Communicate with tools via Server-Sent Events
-- **Security**: Permission system for controlling access to MCP tools
+| Type | Use case |
+|---|---|
+| `stdio` | Local process communicating over stdin/stdout |
+| `sse` | Remote server communicating over Server-Sent Events |
 
-### Configuring MCP Servers
-
-MCP servers are defined in the configuration file under the `mcpServers` section:
+### Configuration
 
 ```json
 {
   "mcpServers": {
-    "example": {
+    "my-local-tool": {
       "type": "stdio",
-      "command": "path/to/mcp-server",
-      "env": [],
-      "args": []
+      "command": "/usr/local/bin/my-mcp-server",
+      "args": ["--flag"],
+      "env": ["MY_VAR=value"]
     },
-    "web-example": {
+    "my-remote-tool": {
       "type": "sse",
-      "url": "https://example.com/mcp",
+      "url": "https://mcp.example.com/sse",
       "headers": {
-        "Authorization": "Bearer token"
+        "Authorization": "Bearer your-token"
       }
     }
   }
 }
 ```
 
-### MCP Tool Usage
+SVPC AI starts each stdio server as a subprocess and tears it down when the session ends.
 
-Once configured, MCP tools are automatically available to the AI assistant alongside built-in tools. They follow the same permission model as other tools, requiring user approval before execution.
+---
 
 ## LSP (Language Server Protocol)
 
-SVPC AI integrates with Language Server Protocol to provide code intelligence features across multiple programming languages.
+SVPC AI maintains connections to language servers and exposes their diagnostics to the agent via the `diagnostics` tool.
 
-### LSP Features
+### What is exposed to the agent
 
-- **Multi-language Support**: Connect to language servers for different programming languages
-- **Diagnostics**: Receive error checking and linting information
-- **File Watching**: Automatically notify language servers of file changes
+| LSP capability | Exposed to agent |
+|---|---|
+| Diagnostics (errors, warnings) | ✅ via `diagnostics` tool |
+| Completions | ❌ |
+| Hover | ❌ |
+| Go-to-definition | ❌ |
 
-### Configuring LSP
+The LSP client implementation supports the full protocol, but only diagnostics are currently wired into the agent's tool system.
 
-Language servers are configured in the configuration file under the `lsp` section:
+### Configuration
 
 ```json
 {
@@ -697,64 +737,305 @@ Language servers are configured in the configuration file under the `lsp` sectio
 }
 ```
 
-### LSP Integration with AI
+The key (`"go"`, `"typescript"`) is a label; the `command` is the executable the server runs. The language server must be installed separately.
 
-The AI assistant can access LSP features through the `diagnostics` tool, allowing it to:
-
-- Check for errors in your code
-- Suggest fixes based on diagnostics
-
-While the LSP client implementation supports the full LSP protocol (including completions, hover, definition, etc.), currently only diagnostics are exposed to the AI assistant.
-
-## Using Github Copilot
-
-_Copilot support is currently experimental._
-
-### Requirements
-
-- [Copilot chat in the IDE](https://github.com/settings/copilot) enabled in GitHub settings
-- One of:
-  - VSCode Github Copilot chat extension
-  - Github `gh` CLI
-  - Neovim Github Copilot plugin (`copilot.vim` or `copilot.lua`)
-  - Github token with copilot permissions
-
-If using one of the above plugins or cli tools, make sure you use the authenticate
-the tool with your github account. This should create a github token at one of the following locations:
-
-- `~/.config/github-copilot/[hosts,apps].json`
-- `$XDG_CONFIG_HOME/github-copilot/[hosts,apps].json`
-
-If using an explicit github token, you may either set the `$GITHUB_TOKEN` environment variable or add it to the svpc.json config file at `providers.copilot.apiKey`.
-
-## Using a self-hosted model provider
-
-SVPC AI can also load and use models from a self-hosted (OpenAI-like) provider.
-This is useful for developers who want to experiment with custom models.
-
-### Configuring a self-hosted provider
-
-You can use a self-hosted model by setting the `LOCAL_ENDPOINT` environment variable.
-This will cause SVPC AI to load and use the models from the specified endpoint.
-
-```bash
-LOCAL_ENDPOINT=http://localhost:1235/v1
-```
-
-### Configuring a self-hosted model
-
-You can also configure a self-hosted model in the configuration file under the `agents` section:
+Enable LSP debug logging:
 
 ```json
 {
-  "agents": {
-    "coder": {
-      "model": "local.granite-3.3-2b-instruct@q8_0",
-      "reasoningEffort": "high"
-    }
-  }
+  "debugLSP": true
 }
 ```
+
+---
+
+## Remote Mode
+
+```bash
+svpc --serve 0.0.0.0
+```
+
+This starts the agent as an HTTP server. On startup it prints the address and an authentication token:
+
+```
+Listening on 0.0.0.0:PORT
+Token: <token>
+```
+
+Remote clients connect using that address and token. The agent process handles all tool execution — the client sends prompts and handles permission prompts from its own code.
+
+```
+Your Machine (agent)
+       │
+  HTTP API
+       │
+  ┌────┴──────────────┐
+  │  Python client    │
+  │  JS client        │
+  │  Android client   │
+  │  Any HTTP client  │
+  └───────────────────┘
+```
+
+### Security
+
+- Only expose the agent on a trusted network. `0.0.0.0` binds to all interfaces.
+- The token is required for every request — do not share it.
+- The agent can execute shell commands with the permissions of the user it runs as.
+- Consider running behind a reverse proxy with TLS for any non-local use.
+
+---
+
+## SDKs
+
+### Go (`pkg/svpc`)
+
+The Go package embeds the agent directly in your process. It does not require a running server.
+
+```bash
+go get github.com/sovereignempirex-ux/svcp/pkg/svpc
+```
+
+```go
+import "github.com/sovereignempirex-ux/svcp/pkg/svpc"
+
+agent, err := svpc.New(ctx, svpc.Options{WorkingDir: "."})
+if err != nil {
+    log.Fatal(err)
+}
+defer agent.Close()
+
+answer, session, err := agent.Answer(ctx, "", "what does this repository do?")
+if err != nil {
+    log.Fatal(err)
+}
+fmt.Println(answer)
+```
+
+### Python (`sdk/python`)
+
+An HTTP client. The agent must be running with `--serve`.
+
+```bash
+pip install svpc-ai
+```
+
+```python
+from svpc import Client
+
+with Client("192.168.1.20", 8080, token) as agent:
+    agent.connect()
+    result = agent.ask_once("summarize the recent changes")
+    print(result["text"])
+```
+
+### JavaScript (`sdk/js`)
+
+An HTTP client. Not yet on npm — install from the release tarball.
+
+```bash
+VERSION=1.0.0
+curl -fLO "https://github.com/sovereignempirex-ux/svcp-ai/releases/download/v${VERSION}/svpc-ai-sdk-${VERSION}.tgz"
+npm install "./svpc-ai-sdk-${VERSION}.tgz"
+```
+
+```js
+import { Client } from 'svpc-ai-sdk';
+
+const agent = new Client({ host: '192.168.1.20', port: 8080, token });
+await agent.version();
+const { text } = await agent.askOnce('what changed here?');
+console.log(text);
+```
+
+Works in Node.js, Deno, Bun, and the browser. No external dependencies.
+
+---
+
+## HTTP API
+
+The HTTP contract is documented in [`docs/api.md`](docs/api.md).
+
+A client authenticates with the token printed at server startup. The API covers:
+
+- Starting and resuming sessions
+- Sending messages and receiving responses
+- Responding to permission prompts
+- Querying version information
+
+The Go library, Python SDK, and JavaScript SDK are all clients over this contract.
+
+---
+
+## Custom Commands
+
+Custom commands are Markdown files that define reusable prompts with optional named placeholders.
+
+### Locations
+
+| Scope | Path | Prefix |
+|---|---|---|
+| User | `$XDG_CONFIG_HOME/svpc/commands/` or `~/.svpc/commands/` | `user:` |
+| Project | `<project>/.svpc/commands/` | `project:` |
+
+### Creating a command
+
+Create `~/.config/svpc/commands/prime-context.md`:
+
+```markdown
+RUN git ls-files
+READ README.md
+```
+
+This registers as `user:prime-context`.
+
+### Named arguments
+
+Use `$NAME` placeholders (uppercase letters, numbers, underscores; must start with a letter):
+
+```markdown
+# Review Issue $ISSUE_NUMBER
+
+RUN gh issue view $ISSUE_NUMBER --json title,body,comments
+RUN git log --oneline --author="$AUTHOR" -20
+```
+
+When you run this command, SVPC AI prompts for `ISSUE_NUMBER` and `AUTHOR` before sending.
+
+### Subdirectories
+
+```
+~/.config/svpc/commands/git/review.md  →  user:git:review
+```
+
+### Using commands
+
+1. Press `Ctrl+K` to open the command dialog
+2. Select your command
+3. Fill in any argument prompts
+4. Press `Enter`
+
+### Built-in commands
+
+| Command | Description |
+|---|---|
+| `Initialize Project` | Creates or updates `SVPC.md` with project context |
+| `Compact Session` | Manually triggers session summarization |
+
+---
+
+## Non-interactive Mode
+
+Run a single prompt without the TUI:
+
+```bash
+# Plain text output
+svpc -p "Explain the use of context in Go"
+
+# JSON output
+svpc -p "Explain the use of context in Go" -f json
+
+# No spinner (good for scripts)
+svpc -p "Explain the use of context in Go" -q
+```
+
+SVPC AI processes the prompt, prints the result to stdout, and exits. All tool permissions are **auto-approved** in this mode.
+
+### Output formats
+
+| Format | Description |
+|---|---|
+| `text` | Plain text (default) |
+| `json` | Result wrapped in a JSON object |
+
+---
+
+## CLI Reference
+
+```bash
+svpc [flags]
+```
+
+| Flag | Short | Description |
+|---|---|---|
+| `--help` | `-h` | Print help |
+| `--debug` | `-d` | Enable debug logging |
+| `--cwd` | `-c` | Set the working directory |
+| `--prompt` | `-p` | Run a prompt in non-interactive mode |
+| `--output-format` | `-f` | Output format: `text` (default) or `json` |
+| `--quiet` | `-q` | Suppress the spinner in non-interactive mode |
+| `--serve` | | Start the HTTP server (e.g. `--serve 0.0.0.0`) |
+
+---
+
+## Keyboard Shortcuts
+
+### Global
+
+| Shortcut | Action |
+|---|---|
+| `Ctrl+C` | Quit |
+| `Ctrl+?` or `?` | Toggle help |
+| `Ctrl+L` | View logs |
+| `Ctrl+A` | Switch session |
+| `Ctrl+K` | Command dialog |
+| `Ctrl+O` | Model selection dialog |
+| `Esc` | Close overlay / return to previous mode |
+
+### Chat
+
+| Shortcut | Action |
+|---|---|
+| `Ctrl+N` | New session |
+| `Ctrl+X` | Cancel current operation |
+| `i` | Focus editor (when not already editing) |
+| `Esc` | Exit editing, focus message list |
+
+### Editor
+
+| Shortcut | Action |
+|---|---|
+| `Ctrl+S` or `Enter` | Send message |
+| `Ctrl+E` | Open external editor |
+| `Esc` | Blur editor, focus messages |
+
+### Session dialog
+
+| Shortcut | Action |
+|---|---|
+| `↑` / `k` | Previous session |
+| `↓` / `j` | Next session |
+| `Enter` | Select session |
+| `Esc` | Close |
+
+### Model dialog
+
+| Shortcut | Action |
+|---|---|
+| `↑` / `k` | Move up |
+| `↓` / `j` | Move down |
+| `←` / `h` | Previous provider |
+| `→` / `l` | Next provider |
+| `Enter` | Select model |
+| `Esc` | Close |
+
+### Permission dialog
+
+| Shortcut | Action |
+|---|---|
+| `a` | Allow |
+| `A` | Allow for session |
+| `d` | Deny |
+| `←` / `→` / `Tab` | Move between options |
+| `Enter` / `Space` | Confirm selection |
+
+### Logs page
+
+| Shortcut | Action |
+|---|---|
+| `Backspace` / `q` | Return to chat |
+
+---
 
 ## Development
 
@@ -762,32 +1043,119 @@ You can also configure a self-hosted model in the configuration file under the `
 
 - Go 1.24.0 or higher
 
-### Building from Source
+```bash
+go version  # must be 1.24+
+```
+
+### Build
 
 ```bash
-# Clone the repository
 git clone https://github.com/sovereignempirex-ux/svcp-ai.git
 cd svcp-ai
-
-# Build
-go build -o svpc
-
-# Run
+go build -o svpc ./cmd
 ./svpc
 ```
 
-## License
+### Run tests
 
-SVPC AI is licensed under the MIT License. See the [LICENSE](LICENSE) file for details.
+```bash
+go test ./...
+```
+
+### Debug mode
+
+```bash
+./svpc -d
+```
+
+Logs appear in the Logs page (`Ctrl+L`) and on stderr.
+
+---
+
+## Build & Release
+
+Releases are published to [GitHub Releases](https://github.com/sovereignempirex-ux/svcp-ai/releases).
+
+### Release assets per version
+
+| Asset | Target |
+|---|---|
+| `svpc-linux-x86_64.tar.gz` | Linux (amd64) |
+| `svpc-linux-arm64.tar.gz` | Linux (arm64) |
+| `svpc-mac-x86_64.tar.gz` | macOS (Intel) |
+| `svpc-mac-arm64.tar.gz` | macOS (Apple Silicon) |
+| `SVPC.AI.exe` | Windows |
+| `svpc-ai.apk` | Android remote client |
+| `svpc-ai-sdk-<version>.tgz` | JavaScript SDK |
+| `checksums.txt` | SHA-256 checksums |
+
+Verify any downloaded asset:
+
+```bash
+sha256sum -c checksums.txt
+```
+
+Cross-platform build targets (Windows MSI, macOS DMG, Linux AppImage/deb/rpm, iOS IPA) are listed as experimental in the current codebase.
+
+---
+
+## Security
+
+**API keys**
+Store API keys in environment variables, not in committed config files. If you use `~/.svpc.json`, ensure its permissions are `600`.
+
+**Shell execution**
+The `bash` tool executes commands as the user running SVPC AI. Review every tool call before approving it. In untrusted repositories, be especially cautious about what the agent is asked to run.
+
+**File modification**
+The `write`, `edit`, and `patch` tools modify files on disk. These changes are not automatically reversible. Use version control.
+
+**Non-interactive mode**
+`-p` auto-approves all permissions. Do not pipe untrusted input into SVPC AI in `-p` mode.
+
+**Remote mode**
+The `--serve` flag opens an HTTP port. Protect it:
+- Use a firewall to restrict which hosts can connect
+- Never expose it to the public internet without a reverse proxy and TLS
+- The printed token is the only authentication mechanism — treat it like a password
+
+**MCP servers**
+MCP servers run as subprocesses with your user's permissions. Only connect to MCP servers you trust.
+
+**Project memory (`SVPC.md`)**
+SVPC AI reads `SVPC.md` automatically. Do not check in SVPC.md files from repositories you do not control.
+
+---
 
 ## Contributing
 
-Contributions are welcome! Here's how you can contribute:
-
 1. Fork the repository
-2. Create a feature branch (`git checkout -b feature/amazing-feature`)
-3. Commit your changes (`git commit -m 'Add some amazing feature'`)
-4. Push to the branch (`git push origin feature/amazing-feature`)
-5. Open a Pull Request
+2. Create a feature branch: `git checkout -b feature/your-feature`
+3. Make your changes
+4. Run tests: `go test ./...`
+5. Commit with a clear message: `git commit -m 'feat: describe your change'`
+6. Push: `git push origin feature/your-feature`
+7. Open a Pull Request against `main`
 
-Please make sure to update tests as appropriate and follow the existing code style.
+Please:
+- Keep PRs focused — one concern per PR
+- Update or add tests where applicable
+- Follow the existing code style (`gofmt`, standard Go conventions)
+- Describe what the PR does and why in the PR description
+
+For significant changes, open an issue first to discuss the approach.
+
+---
+
+## License
+
+SVPC AI is licensed under the **MIT License**.  
+See [LICENSE](LICENSE) for the full text.
+
+---
+
+<div align="center">
+
+Built by [sovereignempirex-ux](https://github.com/sovereignempirex-ux)
+
+</div>
